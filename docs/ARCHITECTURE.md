@@ -141,7 +141,7 @@ This stage decodes the video and extracts frames while preserving their source i
 
 The stage is model-independent: it does not resize, reorder or group frames for a particular reconstruction model. The default input is one continuous video per venue with deliberate revisits; short patch clips may be added. The package is `src/preprocessing`, and its public entry point is `preprocess_capture(clips, output_dir, config=None, resume=True)`. Thresholds are in `configs/preprocessing.toml`.
 
-It runs in four passes, each writing an artifact that later passes can resume from:
+It runs in five passes (probe plus four processing passes), each writing an artifact that later passes can resume from:
 
 | Pass | Modules | Output |
 | --- | --- | --- |
@@ -176,6 +176,11 @@ Conventions:
 - **Candidate pool:** unexported candidates are stored as IDs and can be decoded again from the unchanged source video.
 - **Appearance frames:** these are linked to their geometry keyframe but have no camera poses; pose recovery happens downstream.
 - **Consumers:** the reconstruction stage reads `manifest.json`, `covisibility.json` and the frame folders through `load_result(output_dir)`. Model-specific preparation happens in that stage's adapters.
+
+Commands, Python usage, measurement semantics and current limitations are in
+[Running preprocessing](PREPROCESSING.md). The implemented core handles SDR clips;
+HDR is detected and requires an explicit SDR conversion before decoding. Revisit
+matching is optional and reports “not run” when its dependencies are absent.
 
 ## 3. 3D perception
 
