@@ -232,6 +232,12 @@ def test_end_to_end_and_resume(fixture_path, config, tmp_path):
     preprocess_capture([fixture_path], output, changed)
     run = read_json(output / "run.json")["passes"]
     assert not run["export"]["resumed"] and run["score"]["resumed"]
+    changed = replace(changed, revisits=replace(changed.revisits, self_match_ratio=0.75))
+    preprocess_capture([fixture_path], output, changed)
+    run = read_json(output / "run.json")["passes"]
+    assert all(run[stage]["resumed"] for stage in ("probe", "score", "select"))
+    assert not run["link"]["resumed"]
+    assert all(entry["source_hashes"] for entry in run.values())
 
 
 @pytest.mark.skipif(not revisits_available(), reason="optional revisits extra not installed")
