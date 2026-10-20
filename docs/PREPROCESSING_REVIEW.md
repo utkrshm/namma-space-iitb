@@ -1,7 +1,101 @@
 # Preprocessing review corrections
 
-Recorded `21-10-26 01:56:29 IST` on `feat/preprocessing`. Baseline is the previous
-implementation reviewed by the user; after results use schema 2 and real revisits.
+Latest update `21-10-26 03:09:09 IST` on `feat/preprocessing`. Round-three results
+below supersede the round-two accepted-pair inventory retained later for comparison.
+
+## Round three: repeated-structure guard
+
+User commit `4a6a0a3` is retained. A same-image ALIKED descriptor guard now precedes
+geometric acceptance. For both match endpoints, the cross-image L2 distance must
+beat the nearest self-alternative more than 32 px away by ratio 0.8. Squared
+distances use ratio squared. These defaults were not loosened after seeing controls.
+Only unambiguous correspondences count toward inliers and spatial spread; no
+homography-fraction veto or time-specific rule is used.
+
+Room remains at **0 accepted pairs**. Coorg remains at 28 retrieved candidate pairs,
+but accepts **4 rather than 18**. The report contains 14 `rejected_repetitive` items:
+all 13 previously accepted grille pairs plus one lost luggage link. The lost
+93.48–104.96 s luggage link retains only 49 unambiguous matches, below the unchanged
+50-inlier minimum. This loss is reported rather than tuned away.
+
+### All previously accepted pairs, before/after
+
+All IDs have namespace `coorg_bnb:`. “Ambiguous” counts discarded **raw local
+matches**, not the difference between before/after geometric inlier counts.
+“After” is accepted inliers; a dash means rejection, not zero raw geometric support.
+
+| A PTS | B PTS | Before inliers | Ambiguous | Unambiguous matches | After |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 701592 | 7302316 | 93 | 46 | 67 | **64** |
+| 863504 | 7302316 | 84 | 29 | 63 | **62** |
+| 1421182 | 4956159 | 95 | 134 | 17 | — |
+| 1421182 | 5011622 | 271 | 341 | 17 | — |
+| 1575589 | 4956159 | 189 | 217 | 26 | — |
+| 1575589 | 5011622 | 334 | 359 | 59 | — |
+| 1737501 | 4956159 | 118 | 201 | 9 | — |
+| 1737501 | 5011622 | 213 | 329 | 14 | — |
+| 2041828 | 5011622 | 68 | 115 | 4 | — |
+| 2199233 | 5011622 | 108 | 135 | 7 | — |
+| 2352151 | 5011622 | 79 | 123 | 5 | — |
+| 2521548 | 5011622 | 437 | 556 | 17 | — |
+| 2621991 | 5011622 | 357 | 525 | 14 | — |
+| 2666971 | 5011622 | 276 | 383 | 5 | — |
+| 2666971 | 5056602 | 160 | 270 | 2 | — |
+| 8239281 | 9802883 | 274 | 229 | 99 | **95** |
+| 8413175 | 9446091 | 204 | 175 | 49 | — |
+| 8413175 | 9622983 | 171 | 142 | 63 | **60** |
+
+### Current accepted match images
+
+Paths are relative to `outputs/coorg_bnb/preprocessing/`. All four current images
+were opened and inspected. They show the shared entrance door/key/sconce or the
+shared luggage/table/trim context. All pairs remain outside the 10 s exclusion.
+Old, now-rejected match images were removed by export ownership cleanup.
+
+| Frame A @ seconds | Frame B @ seconds | Ambiguous | Image |
+| --- | --- | ---: | --- |
+| `coorg_bnb:701592` @ 7.795467 | `coorg_bnb:7302316` @ 81.136844 | 46 | `debug/revisit_coorg_bnb_701592__coorg_bnb_7302316.jpg` |
+| `coorg_bnb:863504` @ 9.594489 | `coorg_bnb:7302316` @ 81.136844 | 29 | `debug/revisit_coorg_bnb_863504__coorg_bnb_7302316.jpg` |
+| `coorg_bnb:8239281` @ 91.547567 | `coorg_bnb:9802883` @ 108.920922 | 229 | `debug/revisit_coorg_bnb_8239281__coorg_bnb_9802883.jpg` |
+| `coorg_bnb:8413175` @ 93.479722 | `coorg_bnb:9622983` @ 106.922033 | 142 | `debug/revisit_coorg_bnb_8413175__coorg_bnb_9622983.jpg` |
+
+### Tests and cache reuse
+
+```text
+HF_HUB_OFFLINE=1 uv run --extra revisits pytest -q -ra
+28 passed, 1 xfailed, 1 warning in 56.52s
+```
+
+No skips. The existing per-frame blur xfail remains explicit; the warning is
+upstream Torch JIT deprecation. Ruff is clean. Follow-up focused checks of cache
+invalidation and the splice-report assertion passed (2 tests, 22.27 s).
+
+- New metadata-free positive door control accepts >=50 inliers. All five new
+  controls use actual 1024-pixel verification resolution; at 640 px the door had
+  only 46 unambiguous matches and was correctly rejected without relaxing thresholds.
+- Both reviewed repeated-window controls reject. We use the user's continuous-pan
+  evidence that the two views depict different windows; we do not invent which
+  motif assignment is true from F/H alone. The relational at-most-one control passes.
+- A real splice of the two video fixtures produces exactly one unsupported link,
+  a tracking-break/cut event and no supported edge across the boundary.
+- On **both** full captures, probe/score/select resumed. Their artifact hashes are
+  identical to round two. Per-pass source provenance was captured before edits and
+  validated against the original global source hash/key for migration. No unverified
+  “force skip” was used. Future changes use pass-specific code/record fingerprints.
+
+| Capture | Probe / score / select | Link (CUDA) | Export |
+| --- | --- | ---: | ---: |
+| Room | Resumed, unchanged | 37.88 s | 46.37 s |
+| Coorg | Resumed, unchanged | 182.19 s | 240.26 s |
+
+Geometry/appearance counts remain **36/101** and **161/399**. Sequential graphs
+remain connected independently of revisits. Ingest, blur decisions and the user's
+textured-sharp-frame assertions are unchanged.
+
+## Round-two results (historical)
+
+Recorded `21-10-26 01:56:29 IST`. The following baseline and accepted-pair inventory
+describe the previous verifier, before the repeated-structure guard above.
 
 ## Tracking and selection
 
