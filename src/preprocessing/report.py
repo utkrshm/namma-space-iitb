@@ -35,6 +35,26 @@ def build_report(clips, scores, links, edges, graph, revisits, config):
             else:
                 flush()
         flush()
+        texture_run = []
+        for row in [*rows, None]:
+            if row is not None and "low_texture" in row.flags:
+                texture_run.append(row)
+            else:
+                if (
+                    texture_run
+                    and texture_run[-1].t_s - texture_run[0].t_s >= config.scoring.interval_min_s
+                ):
+                    gaps.append(
+                        GapItem(
+                            clip.clip_id,
+                            texture_run[0].t_s,
+                            texture_run[-1].t_s,
+                            "low_texture_interval",
+                            "info",
+                            {"frames": len(texture_run)},
+                        )
+                    )
+                texture_run.clear()
     for link in links:
         if not link["supported"]:
             gaps.append(

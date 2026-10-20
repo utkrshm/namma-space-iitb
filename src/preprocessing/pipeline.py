@@ -75,7 +75,14 @@ def preprocess_capture(clips, output_dir, config=None, resume=True) -> Preproces
     # A code change invalidates artifacts too, even if the config was not edited.
     code_hash = _hash({p.name: file_hash(p) for p in Path(__file__).parent.glob("*.py")})
     run_path = root / "run.json"
-    previous = read_json(run_path) if resume and run_path.exists() else {}
+    try:
+        previous = read_json(run_path) if resume and run_path.exists() else {}
+    except ValueError:
+        # A schema upgrade requires fresh passes, but prior export ownership is retained
+        # solely to remove stale managed images after a successful new export.
+        previous = json.loads(run_path.read_text())
+        for entry in previous.get("passes", {}).values():
+            entry.pop("key", None)
     run = {
         "started_at": datetime.now(UTC).isoformat(),
         "config": config.to_dict(),

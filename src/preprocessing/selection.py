@@ -7,7 +7,7 @@ from .contracts import Edge, SelectedFrame
 from .decode import decode_frames, rotation_transform
 from .tracking import KLTTracker
 
-QUALITY_FLAGS = {"suspected_blur", "low_detail_or_blur", "exposure", "low_contrast"}
+QUALITY_FLAGS = {"suspected_blur", "exposure", "low_contrast"}
 
 
 class PoolSelector:
@@ -61,8 +61,6 @@ class PoolSelector:
         reason = []
         if measurement.overlap is None or measurement.overlap < self.threshold:
             reason.append("overlap")
-        if not measurement.reliable:
-            reason.append("tracking_weak")
         if elapsed >= cfg.max_interval_s:
             reason.append("max_interval")
         if "possible_cut" in self.scores[frame.frame_id].flags:
@@ -71,6 +69,8 @@ class PoolSelector:
             reason.append("possible_cut")
         if not reason or elapsed < cfg.min_interval_s:
             return
+        if not measurement.reliable:
+            reason.append("tracking_weak")
         candidates = [
             (f, m) for f, m in self.buffer if f.t_s - self.anchor.t_s >= cfg.min_interval_s
         ]

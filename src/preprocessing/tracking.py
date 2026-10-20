@@ -18,6 +18,9 @@ def cell_ids(points, shape, grid):
 
 def detect_corners(gray, config: TrackingConfig):
     h, w = gray.shape
+    strength = cv2.cornerMinEigenVal(gray, blockSize=3, ksize=3)
+    floor = max(config.absolute_eigen_floor, config.global_quality_floor * float(strength.max()))
+    supported = (strength >= floor).astype(np.uint8) * 255
     parts = []
     for y in range(config.grid):
         for x in range(config.grid):
@@ -28,9 +31,14 @@ def detect_corners(gray, config: TrackingConfig):
                 maxCorners=config.corners_per_cell,
                 qualityLevel=config.quality_level,
                 minDistance=config.min_distance,
+                mask=supported[y0:y1, x0:x1],
             )
             if points is not None:
-                parts.append(points.reshape(-1, 2) + np.array([x0, y0], np.float32))
+                points = points.reshape(-1, 2) + np.array([x0, y0], np.float32)
+                # Validate in full-frame coordinates, not against crop-border responses.
+                xy = np.rint(points).astype(int)
+                points = points[strength[xy[:, 1], xy[:, 0]] >= floor]
+                parts.append(points)
     return np.concatenate(parts).astype(np.float32) if parts else np.empty((0, 2), np.float32)
 
 
@@ -103,7 +111,6 @@ class KLTTracker:
             count >= cfg.min_tracks
             and self.initial_coverage >= cfg.min_coverage
             and coverage >= cfg.min_coverage
-            and survival >= cfg.reliable_survival
         )
         displacement = (
             float(np.median(np.linalg.norm(self.current - self.original[self.ids], axis=1)))
