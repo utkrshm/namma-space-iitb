@@ -14,6 +14,17 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 21-10-26 00:51:44 IST — Texture-aware tracking and blur evidence
+
+- **Status:** Adopted following user review.
+- **Decision:** Apply a whole-frame relative and absolute minimum-eigenvalue floor before distributing corners into cells. Only supported cells enter the overlap denominator. Tracking reliability depends on track count and spatial coverage; survival remains diagnostic. Separately, require sufficient edge content for a per-frame blur decision, use edge re-blur evidence rather than a cross-scene sharpness reference as the deciding signal, and report low texture as informational rather than a selection failure.
+- **Rationale and trade-offs:** Cell-local corner thresholds admit compression noise in blank walls, causing false breaks. Sharpness relative to a textured neighboring scene confounds texture with blur. Real-frame regression fixtures will exercise both failures; ambiguous blur labels will be reported rather than fitted with time-specific rules.
+- **Affected components:** Tracking, scoring/config/contracts, quality reporting, fixtures/tests and documentation. Existing PTS, orientation and color conversion remain unchanged.
+- **Implementation steps:** Fix tracking first; then evaluate texture/blur on the eight user-labelled Coorg observations; finally run real optional revisits, export every accepted pair, and rerun both captures.
+- **Implementation detail:** The corner floor is `max(1e-5, 0.01 * frame_max_eigenvalue)`. Continuity needs eight forward/backward-consistent tracks over at least three of sixteen cells, initially and currently; survival is never a gate. Low reliability is recorded on triggered selections rather than independently forcing minimum-interval keyframes. Schema 2 adds edge fraction and re-blur loss to CSV scores. At 640 px, the 49.5 s motion-blurred door cannot be reliably classified from re-blur evidence alone; retain an explicit expected-failure test and use corroborating temporal evidence, rather than fitting a narrow threshold to eight observations.
+- **Completion criteria:** Compare components, tracking-break/weak-link counts, interval keyframe counts and reason histograms against the baseline below. Run real revisit, cross-building negative, spread and temporal-exclusion tests; report all accepted pairs and image paths.
+- **Baseline:** Room: 1 component, 0 breaks/weak links, 49 geometry, 15 in 8.8–14 s; reasons `clip_start=1, overlap=43, flagged_fallback=5, max_interval=5`. Coorg: 20 components, 19 breaks/0 weak links, 193 geometry, 20 in 72–79 s; reasons `clip_start=1, max_interval=46, tracking_weak=30, flagged_fallback=32, overlap=127`. Reasons may co-occur.
+
 ## 20-10-26 23:15:43 IST — Model-independent preprocessing pipeline for continuous smartphone video
 
 - **Status:** Adopted.
