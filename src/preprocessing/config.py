@@ -18,7 +18,11 @@ class ScoreConfig:
     long_window_s: float = 10.0
     reference_percentile: float = 75.0
     relative_blur: float = 0.3
-    absolute_blur: float = 8.0
+    edge_gradient: float = 10.0
+    min_edge_fraction: float = 0.05
+    reblur_sigma: float = 1.0
+    reblur_loss_blur: float = 0.2
+    reblur_loss_context: float = 0.35
     dark_level: int = 16
     blown_level: int = 245
     exposure_fraction: float = 0.65
@@ -35,15 +39,16 @@ class TrackingConfig:
     grid: int = 4
     corners_per_cell: int = 24
     quality_level: float = 0.01
+    global_quality_floor: float = 0.01
+    absolute_eigen_floor: float = 0.00001
     min_distance: float = 6.0
     window: int = 21
     pyramid_levels: int = 3
     iterations: int = 20
     epsilon: float = 0.03
     fb_error: float = 1.0
-    min_tracks: int = 16
-    min_coverage: float = 0.25
-    reliable_survival: float = 0.3
+    min_tracks: int = 8
+    min_coverage: float = 0.1875
 
 
 @dataclass(frozen=True)
@@ -75,7 +80,6 @@ class RevisitConfig:
     confidence: float = 0.999
     max_iterations: int = 10000
     feature_cache_size: int = 12
-    max_debug_pairs: int = 12
 
 
 @dataclass(frozen=True)

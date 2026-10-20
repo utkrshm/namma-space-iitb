@@ -39,9 +39,7 @@ def visualize(output_dir, clips, scores, selected, measurements, matches, config
             if record.pool == "geometry" and record.frame_id in lookup:
                 for ax in axes:
                     ax.axvline(lookup[record.frame_id].t_s, color="green", alpha=0.2, lw=0.7)
-        flagged = [
-            r for r in rows if {"suspected_blur", "low_detail_or_blur"}.intersection(r.flags)
-        ]
+        flagged = [r for r in rows if "suspected_blur" in r.flags]
         axes[0].scatter(
             [r.t_s for r in flagged],
             [r.sharpness for r in flagged],
@@ -81,7 +79,7 @@ def visualize(output_dir, clips, scores, selected, measurements, matches, config
             fig.savefig(path, dpi=110)
             paths.append(path)
             plt.close(fig)
-    for index, match in enumerate(matches):
+    for match in matches:
         images = [
             cv2.imread(str(output_dir / ".cache/revisits" / image_name(match[key], "png")))
             for key in ("a", "b")
@@ -108,7 +106,7 @@ def visualize(output_dir, clips, scores, selected, measurements, matches, config
                 )
             )
         fig.tight_layout()
-        path = debug / f"revisit_{index:02d}.jpg"
+        path = output_dir / match["image_path"]
         fig.savefig(path, dpi=120)
         paths.append(path)
         plt.close(fig)

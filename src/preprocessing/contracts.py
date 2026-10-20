@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, ClassVar, Literal, TypeAlias
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 FrameId: TypeAlias = str  # <clip_id>:<pts>, pts in the source stream time base
 
 
@@ -79,6 +79,8 @@ class FrameScores(JsonRecord):
     luma_std: float
     dt_s: float
     flags: tuple[str, ...] = ()
+    edge_fraction: float = 0.0
+    reblur_loss: float | None = None
 
 
 @dataclass(frozen=True)
@@ -120,7 +122,13 @@ class GapItem(JsonRecord):
     clip_id: str
     t_start_s: float
     t_end_s: float
-    kind: Literal["low_quality_interval", "tracking_break", "weak_link", "unlinked_clip"]
+    kind: Literal[
+        "low_quality_interval",
+        "low_texture_interval",
+        "tracking_break",
+        "weak_link",
+        "unlinked_clip",
+    ]
     severity: Literal["info", "warn", "review"]
     evidence: dict[str, Any]
 

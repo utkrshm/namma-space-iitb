@@ -31,6 +31,43 @@ def rolling_reference(times, values, radius, percentile):
     return np.array([np.percentile(values[a:b], percentile) for a, b in zip(left, right)])
 
 
+def texture_and_reblur(gray, config):
+    """Gradient loss from blurring again, measured only on originally strong edge pixels.
+
+    A low ratio suggests already broad edges, but is not a calibrated blur probability.
+    Insufficient edges mean insufficient evidence, NOT proof of blur.
+    """
+    image = gray.astype(np.float32)
+
+    def magnitude(value):
+        return cv2.magnitude(
+            cv2.Sobel(value, cv2.CV_32F, 1, 0) / 8, cv2.Sobel(value, cv2.CV_32F, 0, 1) / 8
+        )
+
+    gradients = magnitude(image)
+    mask = gradients >= config.edge_gradient
+    fraction = float(mask.mean())
+    if not mask.any():
+        return fraction, None
+    again = magnitude(cv2.GaussianBlur(image, (0, 0), config.reblur_sigma))
+    loss = float(np.maximum(gradients - again, 0)[mask].sum() / gradients[mask].sum())
+    return fraction, loss
+
+
+def blur_flags(edge_fraction, reblur_loss, config, *, relative_sharpness=None):
+    """Pure per-frame evidence by default; optional context may resolve ambiguity."""
+    if edge_fraction < config.min_edge_fraction:
+        return ("low_texture",)
+    strong = reblur_loss is not None and reblur_loss < config.reblur_loss_blur
+    contextual = (
+        relative_sharpness is not None
+        and relative_sharpness < config.relative_blur
+        and reblur_loss is not None
+        and reblur_loss < config.reblur_loss_context
+    )
+    return ("suspected_blur",) if strong or contextual else ()
+
+
 def score_clip(clip, config: PreprocessConfig):
     cfg = config.scoring
     rows, previous, previous_hist, previous_t = [], None, None, None
@@ -46,6 +83,7 @@ def score_clip(clip, config: PreprocessConfig):
         ):
             flags.append("possible_cut")
         dt = frame.t_s - previous_t if previous_t is not None else 0.0
+        edge_fraction, reblur_loss = texture_and_reblur(gray, cfg)
         # A normal 33ms VFR step is not a warning; >=67ms is an info-level flag.
         if dt >= cfg.timing_gap_s:
             flags.append("timing_gap_info")
@@ -68,6 +106,8 @@ def score_clip(clip, config: PreprocessConfig):
                 float(gray.std()),
                 dt,
                 tuple(flags),
+                edge_fraction,
+                reblur_loss,
             )
         )
         previous, previous_hist, previous_t = gray, histogram, frame.t_s
@@ -80,10 +120,9 @@ def score_clip(clip, config: PreprocessConfig):
     for row, a, b, luma in zip(rows, short, long, luma_ref):
         flags = list(row.flags)
         rel_short, rel_long = row.sharpness / max(a, 1e-6), row.sharpness / max(b, 1e-6)
-        if row.sharpness < cfg.absolute_blur:
-            flags.append("low_detail_or_blur")
-        if rel_long < cfg.relative_blur:
-            flags.append("suspected_blur")
+        flags.extend(
+            blur_flags(row.edge_fraction, row.reblur_loss, cfg, relative_sharpness=rel_long)
+        )
         if (
             row.flow_px is not None
             and row.dt_s > 0
@@ -92,7 +131,7 @@ def score_clip(clip, config: PreprocessConfig):
             flags.append("high_motion")
         if max(row.dark_frac, row.blown_frac) > cfg.exposure_fraction:
             flags.append("exposure")
-        if row.luma_std < cfg.low_contrast:
+        if row.luma_std < cfg.low_contrast and "low_texture" not in flags:
             flags.append("low_contrast")
         if abs(row.luma_mean - luma) >= cfg.exposure_jump:
             flags.append("exposure_jump")
@@ -115,7 +154,8 @@ def write_scores(path: Path, records):
         for record in records:
             row = asdict(record)
             row["flags"] = json.dumps(row["flags"])
-            row["flow_px"] = "" if row["flow_px"] is None else row["flow_px"]
+            for key in ("flow_px", "reblur_loss"):
+                row[key] = "" if row[key] is None else row[key]
             writer.writerow(row)
     temporary.replace(path)
 
@@ -140,7 +180,10 @@ def read_scores(path: Path):
                 "luma_mean",
                 "luma_std",
                 "dt_s",
+                "edge_fraction",
+                "reblur_loss",
             ):
-                row[key] = float(row[key]) if row[key] != "" else None
+                if key in row:
+                    row[key] = float(row[key]) if row[key] != "" else None
             records.append(FrameScores(**row))
     return records

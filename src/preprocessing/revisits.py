@@ -57,6 +57,29 @@ def verify_matches(points_a, points_b, shape_a, shape_b, config):
     return count, coverage, a, b
 
 
+def match_image_pair(path_a, path_b, config):
+    """Run the real local verifier directly, also useful for independent negative checks."""
+    import torch
+    from lightglue import ALIKED, LightGlue
+    from lightglue.utils import load_image, rbd
+
+    device = (
+        ("cuda" if torch.cuda.is_available() else "cpu")
+        if config.device == "auto"
+        else config.device
+    )
+    extractor = ALIKED(max_num_keypoints=config.keypoints).eval().to(device)
+    matcher = LightGlue(features="aliked").eval().to(device)
+    with torch.inference_mode():
+        a_image = load_image(path_a, resize=config.image_long_side).to(device)
+        b_image = load_image(path_b, resize=config.image_long_side).to(device)
+        first, second = extractor.extract(a_image), extractor.extract(b_image)
+        matches = rbd(matcher({"image0": first, "image1": second}))["matches"]
+        a = rbd(first)["keypoints"][matches[:, 0]].cpu().numpy()
+        b = rbd(second)["keypoints"][matches[:, 1]].cpu().numpy()
+    return verify_matches(a, b, a_image.shape[-2:], b_image.shape[-2:], config)
+
+
 def find_revisits(clips, selected, scores, config, output_dir):
     cfg = config.revisits
     if not cfg.enabled:
@@ -146,15 +169,17 @@ def find_revisits(clips, selected, scores, config, output_dir):
                     coverage,
                 )
             )
-            if len(debug) < cfg.max_debug_pairs:
-                debug.append(
-                    {
-                        "a": geometry[i].frame_id,
-                        "b": geometry[j].frame_id,
-                        "points_a": a[:200].tolist(),
-                        "points_b": b[:200].tolist(),
-                    }
-                )
+            debug.append(
+                {
+                    "a": geometry[i].frame_id,
+                    "b": geometry[j].frame_id,
+                    "points_a": a[:200].tolist(),
+                    "points_b": b[:200].tolist(),
+                    "t_a_s": lookup[geometry[i].frame_id].t_s,
+                    "t_b_s": lookup[geometry[j].frame_id].t_s,
+                    "image_path": f"debug/revisit_{image_name(geometry[i].frame_id, 'jpg')[:-4]}__{image_name(geometry[j].frame_id, 'jpg')}",
+                }
+            )
     return (
         edges,
         {
