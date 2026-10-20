@@ -188,6 +188,13 @@ Corner strength is screened against the whole frame before grid assignment;
 reliability uses surviving track count and spatial coverage, not survival ratio.
 Every accepted revisit has a debug match image and recorded timestamps/path.
 
+Local revisit matches must also beat spatially distant same-image descriptor
+alternatives on both sides (configured L2 distance ratio). Only unambiguous matches
+enter geometric inlier and spread checks. `Edge.ambiguous_matches` counts discarded
+raw local matches (zero for sequential edges); `revisits.rejected_repetitive` records
+pairs that would pass without this guard. Pass-specific source fingerprints allow
+link/export changes to reuse unchanged upstream artifacts.
+
 ## 3. 3D perception
 
 The geometric front end estimates spatial information from the selected images. Camera poses describe camera position and orientation; intrinsics describe image projection; depth describes the distance to observed surfaces. Point maps associate image pixels with 3D positions, while tracks associate observations of the same point across views.

@@ -23,8 +23,10 @@ after replacing punctuation with underscores.
 
 Use `--config configs/preprocessing.toml` for settings and `--no-resume` to force
 all passes. An existing pass is reused only when source hashes, applicable config,
-code, library versions and artifact hashes match. Missing or corrupted images
+pass-specific code/record definitions, library versions and artifact hashes match. Missing or corrupted images
 invalidate export. Changing JPEG quality reuses scoring and selection.
+Changing only revisit verification also reuses probe, scoring and selection. The
+whole-package hash is audit metadata, not an instruction to invalidate every pass.
 
 ### Optional revisit matching
 
@@ -40,6 +42,15 @@ extracts descriptors one image at a time, releases DINOv2 before local matching,
 and uses a bounded CPU feature cache. Both full videos have run on the 4 GB RTX
 3050 with `device = "auto"` selecting CUDA. All accepted pairs are exported as
 match images, with paths and timestamps recorded in `covisibility.json`.
+
+The local verifier rejects descriptor ambiguity from repeated structures before
+fitting the fundamental matrix. Each cross-image descriptor distance must be less
+than `self_match_ratio` times the nearest distant same-image descriptor distance,
+in **both** images. Descriptors are L2-normalized; same-image alternatives within
+`self_match_radius_px` are excluded. Defaults are ratio **0.8** and radius **32 px**
+at the 1024-pixel verification resolution. Only surviving matches count toward
+inlier and spatial-spread thresholds. This may drop true links; thresholds are not
+relaxed to preserve a particular door or luggage pair.
 
 When the extra is absent or disabled, sequential tracking still runs and
 `report.json` states `revisits.status = "not run"`, with a reason. No substitute
@@ -86,9 +97,16 @@ unexported candidates also requires the unchanged source videos at recorded path
 - `covisibility.json`: geometry nodes, supported sequential edges, optional verified
   revisit edges, connected components and debug match coordinates. Sequential edge
   `inliers` counts forward/backward-checked KLT tracks, not fundamental-matrix inliers.
+  `ambiguous_matches` counts raw local matches removed by the descriptor guard;
+  it defaults to zero for sequential/older edges. This is an additive schema-2 field.
 - `report.json`: low-quality intervals, unsupported links, timing info and revisit
   status. Low-texture intervals are informational and do not count as quality
   failures. Neither a flag nor a disconnected component automatically mandates recapture.
+  `revisits.pair_diagnostics` includes raw/ambiguous/unambiguous counts and acceptance;
+  `revisits.rejected_repetitive` lists pairs that passed the unfiltered geometric
+  check but failed after ambiguity removal. Diagnostic unfiltered inliers never
+  supply an accepted edge. A rejected pair has zero *accepted* `inliers_after`,
+  not a claim that it had no geometrically fitting points.
 - `run.json` and `debug/`: input/config/artifact hashes, versions, original pass
   durations, resume status, timelines, paginated keyframe sheets and revisit matches.
 
