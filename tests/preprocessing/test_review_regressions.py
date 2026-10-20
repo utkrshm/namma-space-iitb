@@ -64,6 +64,9 @@ def test_reviewed_real_frame_labels(name, expected, config):
         assert flags == ("low_texture",)
         # Even a neighboring textured scene must not turn this into a quality failure.
         assert blur_flags(*evidence, config.scoring, relative_sharpness=0.01) == flags
+    elif name != "5":
+        # The 5 s frame is sharp but plain enough to receive informational low_texture.
+        assert flags == ()
 
 
 @pytest.mark.xfail(
