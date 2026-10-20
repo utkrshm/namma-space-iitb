@@ -182,6 +182,12 @@ Commands, Python usage, measurement semantics and current limitations are in
 HDR is detected and requires an explicit SDR conversion before decoding. Revisit
 matching is optional and reports “not run” when its dependencies are absent.
 
+Schema 2 records per-frame edge fraction and re-blur loss in addition to sharpness.
+Insufficient texture produces an informational annotation, not a quality failure.
+Corner strength is screened against the whole frame before grid assignment;
+reliability uses surviving track count and spatial coverage, not survival ratio.
+Every accepted revisit has a debug match image and recorded timestamps/path.
+
 ## 3. 3D perception
 
 The geometric front end estimates spatial information from the selected images. Camera poses describe camera position and orientation; intrinsics describe image projection; depth describes the distance to observed surfaces. Point maps associate image pixels with 3D positions, while tracks associate observations of the same point across views.

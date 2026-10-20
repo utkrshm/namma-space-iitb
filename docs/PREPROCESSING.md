@@ -30,13 +30,16 @@ invalidate export. Changing JPEG quality reuses scoring and selection.
 
 ```sh
 uv sync --extra revisits
-uv run namma-preprocess videos/coorg_bnb.mp4
+uv run --extra revisits namma-preprocess videos/coorg_bnb.mp4
+uv run --extra revisits pytest -ra
 ```
 
 This installs DINOv2, ALIKED and LightGlue dependencies. Model weights must be
 available in the Hugging Face and Torch caches, or downloadable. The implementation
 extracts descriptors one image at a time, releases DINOv2 before local matching,
-and uses a bounded CPU feature cache. GPU memory use has not been measured here.
+and uses a bounded CPU feature cache. Both full videos have run on the 4 GB RTX
+3050 with `device = "auto"` selecting CUDA. All accepted pairs are exported as
+match images, with paths and timestamps recorded in `covisibility.json`.
 
 When the extra is absent or disabled, sequential tracking still runs and
 `report.json` states `revisits.status = "not run"`, with a reason. No substitute
@@ -72,7 +75,8 @@ unexported candidates also requires the unchanged source videos at recorded path
   GPS tags are never copied. `start_pts` and `time_base` define relative times.
 - `all_frames.csv`: every decoded frame, including flagged frames. Empty `flow_px`
   means unknown motion; it must not be interpreted as zero. Flags are JSON arrays
-  inside CSV fields. The run's schema version also covers this table.
+  inside CSV fields. Schema 2 adds `edge_fraction` and `reblur_loss`; the run's
+  schema version also covers this table. Schema 1 runs are recomputed automatically.
 - `selection.json`: selected frames, all candidate IDs, temporal link evidence and
   per-frame tracking measurements. The short image buffer is replayed when an
   earlier frame becomes the new reference.
@@ -83,7 +87,8 @@ unexported candidates also requires the unchanged source videos at recorded path
   revisit edges, connected components and debug match coordinates. Sequential edge
   `inliers` counts forward/backward-checked KLT tracks, not fundamental-matrix inliers.
 - `report.json`: low-quality intervals, unsupported links, timing info and revisit
-  status. Neither a flag nor a disconnected component automatically mandates recapture.
+  status. Low-texture intervals are informational and do not count as quality
+  failures. Neither a flag nor a disconnected component automatically mandates recapture.
 - `run.json` and `debug/`: input/config/artifact hashes, versions, original pass
   durations, resume status, timelines, paginated keyframe sheets and revisit matches.
 
@@ -95,9 +100,19 @@ and y down. Only display rotation changes the exported image geometry.
 
 ## Current limitations
 
-Sharpness flags cannot conclusively separate low texture, defocus and motion blur.
-Long-window references reduce some failures but remain scene-dependent. Reliable
-flow supports blur diagnosis; it is never a prerequisite for a blur/detail flag.
+Sharpness cannot conclusively separate low texture, defocus and motion blur. Frames
+with insufficient edge content receive informational `low_texture`, not
+`suspected_blur`. Re-blur loss measures gradient energy lost on strong edge pixels
+when blurring again. Low loss can support a blur flag; ambiguous loss requires
+temporal corroboration, and temporal sharpness alone cannot flag low-texture frames.
+Reliable flow supports diagnosis but is never a prerequisite for a blur flag.
+The labelled 49.5 s door remains ambiguous using per-frame evidence alone at 640 px;
+this limitation is preserved as a strict expected-failure test. The full pipeline
+still flags that observation with temporal evidence. See [review results](PREPROCESSING_REVIEW.md).
+
+Corners must exceed a whole-frame relative and absolute eigenvalue floor before
+entering the grid. Reliability requires sufficient tracks and spatial coverage;
+track survival remains a diagnostic rather than a reliability or selection gate.
 The temporal selector measures track coverage and displacement, not 3D parallax.
 
 Ordinary 33 ms VFR steps are not timing warnings. Steps of about 67 ms or longer
