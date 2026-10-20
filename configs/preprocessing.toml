@@ -1,0 +1,70 @@
+# Measurements are review flags, not automatic recapture decisions.
+[decode]
+long_side = 640 # Analysis only; exports retain full upright resolution.
+threads = 2 # Bounded decode/OpenCV CPU threads on the laptop.
+
+[scoring]
+tiles = 4 # Sharpness = p75 of a 4x4 grid of Laplacian variances.
+short_window_s = 1.0 # +/- window for local median ranking context.
+long_window_s = 10.0 # +/- reference window; not sufficient alone to detect blur.
+reference_percentile = 75.0
+relative_blur = 0.3 # Low relative sharpness is supporting evidence.
+absolute_blur = 8.0 # Low-detail/blur flag independent of flow; texture is a confound.
+dark_level = 16 # Full-range 8-bit analysis luminance thresholds.
+blown_level = 245
+exposure_fraction = 0.65 # Flag extensive dark OR clipped content, not a rejection.
+low_contrast = 8.0
+exposure_jump = 30.0 # Difference from short-window mean-luma median.
+histogram_cut = 0.1 # Histogram correlation below this flags a possible cut.
+timing_gap_s = 0.066 # >=~67 ms info flag; ordinary 33 ms VFR jitter is not flagged.
+high_motion_px_per_s = 400.0 # Only interpret flow where tracking is reliable.
+interval_min_s = 0.5 # Minimum low-quality interval duration reported.
+
+[tracking]
+grid = 4
+corners_per_cell = 24 # Distributed independently across cells.
+quality_level = 0.01
+min_distance = 6.0 # Analysis pixels.
+window = 21 # LK window side, odd.
+pyramid_levels = 3
+iterations = 20
+epsilon = 0.03
+fb_error = 1.0 # Forward-backward error in analysis pixels.
+min_tracks = 16
+min_coverage = 0.25 # Fraction of all cells initially occupied.
+reliable_survival = 0.3
+
+[selection]
+geometry_overlap = 0.65 # Trigger when surviving initial cells / initial cells falls below this.
+appearance_overlap = 0.85 # Higher threshold selects more densely.
+max_interval_s = 2.0
+min_interval_s = 0.3 # Prevent near-duplicate bursts; does not erase gap flags.
+buffer_s = 0.3 # Choose raw-sharpest acceptable recent frame; replay tracking from it.
+minimum_edge_overlap = 0.25 # Require reliable, distributed tracking support for edges.
+appearance = true # Appearance images have keyframe associations, not poses.
+
+[revisits]
+enabled = true # Missing optional extra is reported as not run, not substituted.
+model = "facebook/dinov2-base"
+device = "auto" # CUDA if available, otherwise CPU.
+temporal_exclusion_s = 10.0 # Same-clip neighbors excluded; cross-clip pairs remain eligible.
+top_k = 5
+min_similarity = 0.75 # Descriptor cosine threshold; geometric verification still required.
+image_long_side = 1024
+keypoints = 1024 # ALIKED only, never SuperPoint.
+min_inliers = 50
+min_inlier_ratio = 0.3
+min_coverage = 0.25 # Occupied grid fraction in BOTH images.
+min_hull_area = 0.05 # Convex hull area / image area in BOTH images.
+ransac_px = 1.5
+confidence = 0.999
+max_iterations = 10000
+feature_cache_size = 12 # CPU LRU cache, only current pair moved to GPU.
+max_debug_pairs = 12
+
+[export]
+jpeg_quality = 95
+png_compression = 3
+contact_columns = 6
+contact_page_size = 48
+thumbnail_long_side = 220
