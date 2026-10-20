@@ -139,6 +139,44 @@ The capture Standard Operating Procedure guides how a person records an indoor s
 
 This stage decodes the video and extracts frames while preserving their source identity and timing. Quality filtering identifies unusable observations, such as severely blurred frames. Keyframe selection reduces redundant views while retaining useful coverage and connections between parts of the scene. This stage is the current implementation focus.
 
+The stage is model-independent: it does not resize, reorder or group frames for a particular reconstruction model. The default input is one continuous video per venue with deliberate revisits; short patch clips may be added. The package is `src/preprocessing`, and its public entry point is `preprocess_capture(clips, output_dir, config=None, resume=True)`. Thresholds are in `configs/preprocessing.toml`.
+
+It runs in four passes, each writing an artifact that later passes can resume from:
+
+| Pass | Modules | Output |
+| --- | --- | --- |
+| 0. Probe | `probe.py` | `clips.json`: rotation, time base, frame-rate variation, colour/HDR, size, duration |
+| 1. Score every frame (640 px greyscale) | `decode.py`, `scoring.py`, `tracking.py` | `all_frames.csv`: sharpness, exposure, timestamp gaps, motion, tracking reliability, flags |
+| 2. Select | `selection.py`, `tracking.py` | `selection.json`: geometry keyframes, denser appearance frames, candidate pool |
+| 3. Link | `revisits.py`, `graph.py`, `report.py` | `covisibility.json`, `report.json` |
+| 4. Export (full resolution) | `storage.py`, `export.py`, `visualize.py` | frame images, `manifest.json`, `debug/` plots |
+
+Shared record types and their JSON forms are defined in `contracts.py`; `config.py` loads the configuration.
+
+### Output contract
+
+```text
+outputs/<capture_id>/preprocessing/
+  run.json             config, input hashes, library versions, timings per pass
+  clips.json           per-clip metadata
+  all_frames.csv       one row per decoded frame: scores and flags
+  selection.json       selection decisions, including the candidate pool
+  manifest.json        selected frames: provenance, pool, keyframe link, reason, image path
+  covisibility.json    nodes = geometry keyframes; sequential and revisit edges with measured weights
+  report.json          low-quality intervals, tracking breaks, weak links, unlinked clips, loop links
+  geometry_frames/     PNG, full resolution
+  appearance_frames/   JPEG (quality configurable), full resolution
+  debug/               timeline plot, contact sheets, revisit match images
+```
+
+Conventions:
+
+- **Frame IDs:** `<clip_id>:<pts>`. The PTS is the stream's presentation timestamp in its time base; times are in seconds from the stream start.
+- **Transform:** the only image transform applied is the clip's display rotation. Exported frames are upright, with the pixel origin at the top left, x pointing right and y pointing down. Analysis-resolution measurements record their scale relative to the exported frame.
+- **Candidate pool:** unexported candidates are stored as IDs and can be decoded again from the unchanged source video.
+- **Appearance frames:** these are linked to their geometry keyframe but have no camera poses; pose recovery happens downstream.
+- **Consumers:** the reconstruction stage reads `manifest.json`, `covisibility.json` and the frame folders through `load_result(output_dir)`. Model-specific preparation happens in that stage's adapters.
+
 ## 3. 3D perception
 
 The geometric front end estimates spatial information from the selected images. Camera poses describe camera position and orientation; intrinsics describe image projection; depth describes the distance to observed surfaces. Point maps associate image pixels with 3D positions, while tracks associate observations of the same point across views.
