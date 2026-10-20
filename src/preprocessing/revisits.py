@@ -57,11 +57,65 @@ def verify_matches(points_a, points_b, shape_a, shape_b, config):
     return count, coverage, a, b
 
 
-def match_image_pair(path_a, path_b, config):
+def unambiguous_matches(first, second, matches, config):
+    """Lowe-style distance ratio against spatially distant SAME-image alternatives.
+
+    ALIKED descriptors are explicitly L2-normalized. Compare squared Euclidean
+    distances with ratio squared, on both sides. Equal-distance ties are ambiguous.
+    Keypoints within radius pixels are excluded to avoid treating adjacent detections
+    of the same physical feature as repeated structure.
+    """
+    import torch
+    from torch.nn.functional import normalize
+
+    if not len(matches):
+        return torch.empty(0, dtype=torch.bool, device=matches.device)
+    descriptors_a = normalize(first["descriptors"], dim=-1)
+    descriptors_b = normalize(second["descriptors"], dim=-1)
+
+    def best_distant_distance(descriptors, keypoints):
+        distance = (2 - 2 * (descriptors @ descriptors.T)).clamp_min(0)
+        spatial = torch.cdist(keypoints.float(), keypoints.float())
+        distance.masked_fill_(spatial <= config.self_match_radius_px, float("inf"))
+        return distance.min(dim=1).values
+
+    own_a = best_distant_distance(descriptors_a, first["keypoints"])
+    own_b = best_distant_distance(descriptors_b, second["keypoints"])
+    cross = ((descriptors_a[matches[:, 0]] - descriptors_b[matches[:, 1]]) ** 2).sum(dim=-1)
+    threshold = config.self_match_ratio**2
+    return (cross < threshold * own_a[matches[:, 0]]) & (cross < threshold * own_b[matches[:, 1]])
+
+
+def verify_feature_pair(first, second, matcher, shape_a, shape_b, config):
+    """Shared real verification for the pipeline and standalone pair controls."""
+    from lightglue.utils import rbd
+
+    matches = rbd(matcher({"image0": first, "image1": second}))["matches"]
+    first, second = rbd(first), rbd(second)
+    a = first["keypoints"][matches[:, 0]].cpu().numpy()
+    b = second["keypoints"][matches[:, 1]].cpu().numpy()
+    keep = unambiguous_matches(first, second, matches, config).cpu().numpy()
+    # The unfiltered result is diagnostic only: it never supplies accepted inliers.
+    before = verify_matches(a, b, shape_a, shape_b, config)
+    verified = verify_matches(a[keep], b[keep], shape_a, shape_b, config)
+    ambiguous = int((~keep).sum())
+    diagnostics = {
+        "raw_matches": len(matches),
+        "ambiguous_matches": ambiguous,
+        "unambiguous_matches": int(keep.sum()),
+        "inliers_before": before[0] if before is not None else 0,
+        "inliers_after": verified[0] if verified is not None else 0,
+        "accepted": verified is not None,
+        "rejected_repetitive": before is not None and verified is None and ambiguous > 0,
+    }
+    return verified, diagnostics
+
+
+def match_image_pair(path_a, path_b, config, *, diagnostics=None):
     """Run the real local verifier directly, also useful for independent negative checks."""
     import torch
     from lightglue import ALIKED, LightGlue
-    from lightglue.utils import load_image, rbd
+    from lightglue.utils import load_image
 
     device = (
         ("cuda" if torch.cuda.is_available() else "cpu")
@@ -74,10 +128,12 @@ def match_image_pair(path_a, path_b, config):
         a_image = load_image(path_a, resize=config.image_long_side).to(device)
         b_image = load_image(path_b, resize=config.image_long_side).to(device)
         first, second = extractor.extract(a_image), extractor.extract(b_image)
-        matches = rbd(matcher({"image0": first, "image1": second}))["matches"]
-        a = rbd(first)["keypoints"][matches[:, 0]].cpu().numpy()
-        b = rbd(second)["keypoints"][matches[:, 1]].cpu().numpy()
-    return verify_matches(a, b, a_image.shape[-2:], b_image.shape[-2:], config)
+        verified, details = verify_feature_pair(
+            first, second, matcher, a_image.shape[-2:], b_image.shape[-2:], config
+        )
+    if diagnostics is not None:
+        diagnostics.update(details)
+    return verified
 
 
 def find_revisits(clips, selected, scores, config, output_dir):
@@ -88,7 +144,7 @@ def find_revisits(clips, selected, scores, config, output_dir):
         return [], {"status": "not run", "reason": "revisits extra not installed"}, []
     import torch
     from lightglue import ALIKED, LightGlue
-    from lightglue.utils import load_image, rbd
+    from lightglue.utils import load_image
     from transformers import AutoImageProcessor, AutoModel
 
     device = (
@@ -146,16 +202,20 @@ def find_revisits(clips, selected, scores, config, output_dir):
         cache.move_to_end(index)
         return {k: v.to(device) if torch.is_tensor(v) else v for k, v in cache[index].items()}
 
-    edges, debug = [], []
+    edges, debug, pair_diagnostics = [], [], []
     with torch.inference_mode():
         for i, j in sorted(pairs):
             first, second = features(i), features(j)
-            matched = rbd(matcher({"image0": first, "image1": second}))["matches"]
-            a = rbd(first)["keypoints"][matched[:, 0]].cpu().numpy()
-            b = rbd(second)["keypoints"][matched[:, 1]].cpu().numpy()
             shape_a = cv2.imread(str(paths[geometry[i].frame_id])).shape[:2]
             shape_b = cv2.imread(str(paths[geometry[j].frame_id])).shape[:2]
-            verified = verify_matches(a, b, shape_a, shape_b, cfg)
+            verified, details = verify_feature_pair(first, second, matcher, shape_a, shape_b, cfg)
+            details.update(
+                a=geometry[i].frame_id,
+                b=geometry[j].frame_id,
+                t_a_s=lookup[geometry[i].frame_id].t_s,
+                t_b_s=lookup[geometry[j].frame_id].t_s,
+            )
+            pair_diagnostics.append(details)
             if verified is None:
                 continue
             count, coverage, a, b = verified
@@ -164,9 +224,10 @@ def find_revisits(clips, selected, scores, config, output_dir):
                     geometry[i].frame_id,
                     geometry[j].frame_id,
                     "revisit",
-                    count / max(1, len(matched)) * coverage,
+                    count / max(1, details["unambiguous_matches"]) * coverage,
                     count,
                     coverage,
+                    details["ambiguous_matches"],
                 )
             )
             debug.append(
@@ -177,6 +238,7 @@ def find_revisits(clips, selected, scores, config, output_dir):
                     "points_b": b[:200].tolist(),
                     "t_a_s": lookup[geometry[i].frame_id].t_s,
                     "t_b_s": lookup[geometry[j].frame_id].t_s,
+                    "ambiguous_matches": details["ambiguous_matches"],
                     "image_path": f"debug/revisit_{image_name(geometry[i].frame_id, 'jpg')[:-4]}__{image_name(geometry[j].frame_id, 'jpg')}",
                 }
             )
@@ -188,6 +250,8 @@ def find_revisits(clips, selected, scores, config, output_dir):
             "model": cfg.model,
             "pairs_tested": len(pairs),
             "accepted": len(edges),
+            "rejected_repetitive": [d for d in pair_diagnostics if d["rejected_repetitive"]],
+            "pair_diagnostics": pair_diagnostics,
         },
         debug,
     )

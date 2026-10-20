@@ -115,6 +115,7 @@ class Edge(JsonRecord):
     weight: float
     inliers: int
     inlier_coverage: float
+    ambiguous_matches: int = 0  # Raw local matches removed by the same-image descriptor guard.
 
 
 @dataclass(frozen=True)
