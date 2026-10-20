@@ -76,6 +76,8 @@ class RevisitConfig:
     min_inlier_ratio: float = 0.3
     min_coverage: float = 0.25
     min_hull_area: float = 0.05
+    self_match_radius_px: float = 32.0
+    self_match_ratio: float = 0.8
     ransac_px: float = 1.5
     confidence: float = 0.999
     max_iterations: int = 10000
@@ -112,6 +114,8 @@ class PreprocessConfig:
             raise ValueError("Invalid tracking grid or LK window")
         if r.top_k < 1 or r.temporal_exclusion_s < 0 or r.feature_cache_size < 1:
             raise ValueError("Invalid revisit configuration")
+        if r.self_match_radius_px < 0 or not 0 < r.self_match_ratio < 1:
+            raise ValueError("Invalid descriptor self-match guard")
         if not 1 <= self.export.jpeg_quality <= 100:
             raise ValueError("JPEG quality must be 1..100")
 

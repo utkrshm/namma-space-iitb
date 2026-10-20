@@ -1,6 +1,7 @@
 """Artifact-based orchestration with content-validated, section-specific resume keys."""
 
 import hashlib
+import inspect
 import json
 import platform
 import time
@@ -11,6 +12,7 @@ from pathlib import Path
 
 import cv2
 
+from . import contracts
 from .config import PreprocessConfig
 from .contracts import (
     SCHEMA_VERSION,
@@ -56,6 +58,33 @@ def _versions():
     return result
 
 
+def pass_source_hashes(name):
+    """Invalidate only code and record definitions used by this pass.
+
+    Optional Edge diagnostics are backward compatible with cached sequential edges;
+    breaking record changes still require a schema-version bump.
+    """
+    modules = {
+        "probe": ["probe.py"],
+        "score": ["scoring.py", "tracking.py", "decode.py"],
+        "select": ["selection.py", "tracking.py", "decode.py"],
+        "link": ["revisits.py", "graph.py", "report.py"],
+        "export": ["export.py", "storage.py", "visualize.py", "decode.py"],
+    }
+    types = {
+        "probe": [contracts.ClipInfo],
+        "score": [contracts.ClipInfo, contracts.FrameScores],
+        "select": [contracts.ClipInfo, contracts.SelectedFrame, contracts.RotationTransform],
+        "link": [contracts.Edge, contracts.GapItem],
+        "export": [contracts.ClipInfo, contracts.SelectedFrame, contracts.RotationTransform],
+    }
+    root = Path(__file__).parent
+    hashes = {filename: file_hash(root / filename) for filename in modules[name]}
+    records = [contracts.JsonRecord, contracts.read_json, contracts.write_json, *types[name]]
+    hashes["contracts"] = _hash([inspect.getsource(record) for record in records])
+    return hashes
+
+
 def preprocess_capture(clips, output_dir, config=None, resume=True) -> PreprocessResult:
     config = config or PreprocessConfig()
     if isinstance(config, (str, Path)):
@@ -72,7 +101,7 @@ def preprocess_capture(clips, output_dir, config=None, resume=True) -> Preproces
     root.mkdir(parents=True, exist_ok=True)
     cv2.setNumThreads(config.decode.threads)
     versions = _versions()
-    # A code change invalidates artifacts too, even if the config was not edited.
+    # Whole-package hash remains audit metadata; invalidation is per pass below.
     code_hash = _hash({p.name: file_hash(p) for p in Path(__file__).parent.glob("*.py")})
     run_path = root / "run.json"
     try:
@@ -93,19 +122,23 @@ def preprocess_capture(clips, output_dir, config=None, resume=True) -> Preproces
     }
 
     def stage(name, dependencies, settings, action):
-        key = _hash(
-            {
-                "inputs": run["inputs"],
-                "config": settings,
-                "dependencies": dependencies,
-                "code": code_hash,
-                "versions": versions,
-                "schema": SCHEMA_VERSION,
-            }
-        )
+        sources = pass_source_hashes(name)
+        common = {
+            "inputs": run["inputs"],
+            "config": settings,
+            "dependencies": dependencies,
+            "versions": versions,
+            "schema": SCHEMA_VERSION,
+        }
+        key = _hash({**common, "code": sources, "cache_protocol": 1})
         old = previous.get("passes", {}).get(name, {})
         started = time.perf_counter()
-        valid = bool(old.get("key") == key and old.get("artifacts"))
+        # Legacy reuse requires pre-existing per-pass source provenance AND an
+        # exact match of the original global key. Without provenance, recompute.
+        migrated = old.get("source_hashes") == sources and old.get("key") == _hash(
+            {**common, "code": previous.get("code_hash")}
+        )
+        valid = bool((old.get("key") == key or migrated) and old.get("artifacts"))
         if valid:
             valid = all(
                 artifact_path(root, path).is_file()
@@ -113,13 +146,21 @@ def preprocess_capture(clips, output_dir, config=None, resume=True) -> Preproces
                 for path, digest in old["artifacts"].items()
             )
         if valid:
-            entry = {**old, "resumed": True, "validation_s": time.perf_counter() - started}
+            entry = {
+                **old,
+                "key": key,
+                "source_hashes": sources,
+                "resumed": True,
+                "cache_key_migrated": migrated,
+                "validation_s": time.perf_counter() - started,
+            }
             print(f"{name}: resumed", flush=True)
         else:
             print(f"{name}: running", flush=True)
             artifacts = action()
             entry = {
                 "key": key,
+                "source_hashes": sources,
                 "resumed": False,
                 "duration_s": time.perf_counter() - started,
                 "artifacts": {str(path.relative_to(root)): file_hash(path) for path in artifacts},

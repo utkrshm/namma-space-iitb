@@ -14,6 +14,16 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 21-10-26 02:39:40 IST — Reject descriptor-ambiguous repeated structures
+
+- **Status:** Adopted following round-three user review.
+- **Decision:** Before geometric verification, compare each cross-image ALIKED match against distant same-image descriptor alternatives in both images. Only matches whose cross-image descriptor distance beats both self alternatives by a configured ratio may contribute inliers or spatial spread. Record removed-match counts on accepted edges and rejected-repetitive pair diagnostics in the report. Do not use a homography-fraction veto or time-specific exceptions.
+- **Rationale and trade-offs:** Repeated window motifs can produce shifted correspondences that satisfy fundamental-matrix and coverage checks. Prefer missed loop links over ambiguous ones; do not relax the guard to retain doors or luggage. Keep the geometric matcher shared between the standalone pair API and pipeline.
+- **Affected components:** Revisit verification/config/edge diagnostics, real fixtures/tests and pass-specific cache provenance. Preserve ingest, scoring and selection behavior, including user commit `4a6a0a3`.
+- **Implementation steps:** Add self-alternative filtering and real door/window controls; add a real spliced-input tracking-break control; rerun link/export only with validated upstream cache reuse; record all prior accepted pairs' before/after counts and images.
+- **Cache detail:** Invalidation now uses pass-specific module/record fingerprints plus config, schema, library versions, inputs and artifact checksums. The round-two global source hash was verified against the unchanged source before editing; per-pass provenance was recorded then for a validated legacy-key migration. Old runs without that provenance conservatively recompute. Optional edge diagnostics remain backward compatible with cached sequential edges.
+- **Completion criteria:** Door positive accepts >= configured inliers, at most one of the two reviewed different-window pairs accepts, cross-building and temporal controls still pass, splice has one break without a cross-boundary edge. Record any lost true links rather than tuning them back in.
+
 ## 21-10-26 00:51:44 IST — Texture-aware tracking and blur evidence
 
 - **Status:** Adopted following user review.
