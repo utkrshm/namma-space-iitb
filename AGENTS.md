@@ -9,6 +9,7 @@ This repository is a submission to the Namma Space challenge for the IIT Bombay 
 ## Development environment
 - Use `uv` for Python environment and package management. Never use pip directly. Maintain dependencies in `pyproject.toml`.
 - Use `uv run` for running scripts, tests, formatting, linting and type checking. Document common workflows as exact `uv run` commands. Use `[project.scripts]` for application CLI entry points when appropriate. Use `uvx` for standalone tools that do not require the project environment.
+- Run `uv run ruff check` to idenitfy linting errors, and correct them using `uv run ruff check --fix --fixable <codes>`.
 
 ## General instructions
 - Make the code modular. Have clear separation boundaries, and clear contracts for handoff between different modules and strictly adhere to the contracts defined. For example, the input and output of the preprocessing step should be well documented and clearly defined, during the execution as well as the planning stages.
@@ -22,6 +23,8 @@ This repository is a submission to the Namma Space challenge for the IIT Bombay 
 - For code comments, use common/existing terms for easy human understanding; avoid obsecure terms or coining unnecessary new concepts.
 - Preserve original captures and retain frame IDs, timestamps and image-transformation metadata. Document coordinate frames, units and transform conventions at module boundaries. Keep generated artifacts separate from source inputs and curated test fixtures.
 - Work in separate branches for separate components. Do not work in the `master` branch.
+- Add blank lines between setup, validation, data preparation, computation, I/O and output handling whenever those phases are present and distinct. 
+- Do not write long uninterrupted sequences of statements. Do not insert a blank line after every statement. Ensure Ruff formatting preserves the intended separation.
 
 ## Validation and Verification
 - Test real implementations. Do not create mock or fake pipeline/model implementations merely to make tests pass. If required hardware or dependencies are unavailable, report the affected checks as not run instead of substituting a fake.
