@@ -1,0 +1,6 @@
+[submodule "src/reconstruction/deps/vggt"]
+	path = src/reconstruction/deps/vggt
+	url = https://github.com/facebookresearch/vggt
+[submodule "src/reconstruction/deps/VGGT-Long"]
+	path = src/reconstruction/deps/VGGT-Long
+	url = https://github.com/DengKaiCQ/VGGT-Long
