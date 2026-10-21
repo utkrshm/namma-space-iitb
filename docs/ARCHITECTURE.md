@@ -205,8 +205,9 @@ VGGT and VGGT-Ω are examples shown in the diagram. The available predictions, a
 
 `src/reconstruction/` provides `VGGTInference`, with explicit `load()`, reusable
 `predict()` and `unload()` methods. Each call jointly infers one image or an ordered
-sequence representing one scene on a larger CUDA GPU. Pretrained inference is not
-run on the development laptop. Torch, weights and Open3D are loaded lazily.
+sequence representing one scene on a CUDA GPU with sufficient memory. Both captures
+have run on the RTX A4000 machine; settings and limitations are recorded in
+[Project state](STATE.md). Torch, weights and Open3D are loaded lazily.
 
 `load_preprocessed_frames()` consumes the frozen `load_result()` handoff, defaults
 to geometry frames, and orders views by clip then source PTS. Model-specific
@@ -224,9 +225,22 @@ also supplied. Geometry uses arbitrary scene units, not metric scale.
 The root script `get_recon.py` and `namma-reconstruct` entry point save processed
 arrays/provenance and a filtered RGB point cloud under
 `outputs/<capture_id>/reconstruction/`. Open3D exports and displays the cloud.
-`--no-view` supports headless GPU export; `--view existing.ply` views saved geometry
-without model loading. Array shapes, preparation and commands are documented in
+`--no-view` supports headless GPU export; `--view existing.ply` and standalone
+`view_point_cloud.py PATH.ply` view saved geometry without model loading.
+Array shapes, preparation and commands are documented in
 [Running VGGT reconstruction](RECONSTRUCTION.md).
+
+### Optional floor-plane postprocessing
+
+`src/reconstruction/floor.py` and root `align_floor.py` provide a separate
+`floor_aligned/` export. A pretrained semantic model identifies floor/rug pixels;
+confidence-filtered world observations support robust scene/local floor planes.
+Global rigid leveling establishes Z-up/floor Z=0. Optional per-view rigid
+floor constraints assume one flat floor, interpolating plane estimates when the
+floor is unseen. This does not perform bundle adjustment, metric calibration or
+general multi-view registration. The original reconstruction remains in its original
+frame; aligned clouds, per-frame transforms and adjusted cameras are explicit
+separate artifacts. See [floor detection and alignment](RECONSTRUCTION.md#floor-detection-and-alignment).
 
 ## 4. Geometric reconstruction
 

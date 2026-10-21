@@ -14,6 +14,24 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 21-10-26 15:58:08 IST — Floor-constrained point-cloud postprocessing
+
+- **Status:** Adopted following user review of uneven Coorg floors.
+- **Decision:** Preserve original VGGT artifacts and export separate `floor_aligned/` clouds. Use pretrained ADE20K SegFormer floor/rug masks, confidence-filtered 3D observations and robust plane fitting. Give Room one global rigid leveling transform. For the single-storey Coorg capture, also align reliable per-view floor planes by minimal rotations about each camera and vertical translations; interpolate plane estimates in source time where the floor is unseen. Export all transforms, adjusted camera poses, mask provenance and before/after residuals.
+- **Rationale and trade-offs:** Diagnostics show Coorg's local floor normals vary by up to 18 degrees; global leveling alone cannot address this. Transform whole observations rigidly rather than projecting floor pixels onto a fabricated flat surface. Preserve per-view shape, scale and provenance, but explicitly treat this as a single-floor prior, not bundle adjustment or a correction of all cross-view drift. Interpolation across floor-free spans is an estimate, and genuine steps/multiple storeys require a different model. Both scenes can share Z-up/floor Z=0 without claiming a common XY origin or metric scale.
+- **Affected components:** `src/reconstruction/floor.py`, public exports, root `align_floor.py`, optional floor dependencies and reconstruction/architecture/state documentation; generated diagnostics and corrected artifacts under `outputs/`.
+- **Implementation steps:** Inspect semantic masks and per-view plane evidence; implement robust floor estimation and transform serialization; generate Room rigid-level and Coorg floor-constrained clouds; verify residual reduction, proper rotations, rigid distance preservation and exact cloud/camera provenance. Retain the unexecuted interactive viewer and add no tests per the user's earlier instruction.
+- **Completion criteria:** Separate usable colored clouds, a documented coordinate contract, explicit inferred/reliable floor-frame status, measurable floor-residual improvement for Coorg, and original reconstructions retained.
+
+## 21-10-26 12:38:58 IST — Execute capture reconstruction and provide a standalone viewer
+
+- **Status:** Adopted following user request.
+- **Decision:** Run each full capture's preprocessing separately, pull `feat/reconstruction`, and export joint VGGT reconstructions under `outputs/<capture>/reconstruction/`. Source Linux PyTorch and torchvision from the official CUDA 12.6 index, retaining the declared package versions. Add root `view_point_cloud.py` using the existing Open3D visualization module; do not execute the viewer or add tests.
+- **Rationale and trade-offs:** This GPU machine has an RTX A4000 (16 GB) and driver 535.309.01. The default CUDA 13 PyTorch wheel cannot initialize CUDA; CUDA 12.x minor-version compatibility permits using a CUDA 12.6 build without changing the system driver. Full geometry pools remain the initial inference target; any memory-limited run must explicitly record reduced resolution or frame selection rather than silently merging independent chunks.
+- **Affected components:** `pyproject.toml`, `uv.lock`, `view_point_cloud.py`, reconstruction usage/state documentation and generated artifacts under `outputs/`.
+- **Implementation steps:** Install reconstruction/viewer extras with compatible CUDA wheels; verify real CUDA initialization; run both capture reconstructions headlessly; inspect saved array/cloud metadata; document commands and results; add a thin standalone viewer CLI accepting a point-cloud path.
+- **Completion criteria:** Both captures have real exported point clouds and recorded inference settings, or an explicit hardware/runtime blocker. The standalone viewer is documented and linted but is not executed; interactive quality review is left to the user.
+
 ## 21-10-26 11:48:44 IST — CUDA VGGT inference and Open3D reconstruction preview
 
 - **Status:** Adopted following user clarification.

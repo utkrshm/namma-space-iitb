@@ -23,6 +23,11 @@ namma-preprocess = "src.preprocessing.cli:main"
 namma-reconstruct = "src.reconstruction.cli:main"
 
 [project.optional-dependencies]
+floor = [
+    "torch>=2.14.1",
+    "torchvision>=0.29.1",
+    "transformers>=5.20.2",
+]
 reconstruction = [
     "einops>=0.8",
     "huggingface-hub>=0.34",
@@ -48,6 +53,13 @@ line-length = 100
 
 [tool.uv.sources]
 lightglue = { git = "https://github.com/cvg/LightGlue" }
+torch = [{ index = "pytorch-cu126", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cu126", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
 
 [dependency-groups]
 dev = [

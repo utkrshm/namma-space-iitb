@@ -2,14 +2,15 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `21-10-26 12:08:13 IST`
+**Last updated:** `21-10-26 16:05:39 IST`
 
 ## Current Focus
 
-Preprocessing is frozen. The VGGT wrapper, preprocessed-frame adapter and Open3D
-point-cloud script are implemented on `feat/reconstruction`. CPU processing and
-handoff checks pass. Pretrained inference is reserved for a larger CUDA GPU; no
-model was instantiated or run on this laptop.
+Both full captures have real reconstructed point clouds. User review found uneven
+Coorg floors; separate floor-aligned exports now provide a common Z-up/floor Z=0
+convention. Room uses one global rigid transform; Coorg uses per-view floor
+constraints. Work is on `feat/floor`, branched from `feat/reconstruction` at
+`175fb6f`, per user request. The interactive viewer remains unexecuted by the agent.
 
 ## Stage Status
 
@@ -19,18 +20,96 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 | --- | --- |
 | Documentation scaffolding | Verified |
 | Preprocessing | Verified on supplied captures; conservative repeated-structure filtering, known per-frame blur ambiguity |
-| VGGT inference and point-cloud preview | Implemented (awaiting larger-GPU inference and Open3D runtime verification) |
+| VGGT inference and point-cloud export | Verified on both captures; interactive qualitative review pending |
+| Floor-plane alignment | Implemented and verified on real outputs; Coorg floor residuals reduced, cross-view drift remains |
 | Surface reconstruction, scene understanding and navigation | Planned |
 
 ## Latest Decision
 
-- **Timestamp:** `21-10-26 11:48:44 IST`
-- **Decision:** Joint CUDA-only vanilla VGGT inference with CPU NumPy outputs and Open3D export/viewing; keep preprocessing frozen and do not run model inference on the laptop.
-- **Reference:** “CUDA VGGT inference and Open3D reconstruction preview” in [PLANS.md](PLANS.md).
+- **Timestamp:** `21-10-26 15:58:08 IST`
+- **Decision:** Export separate semantic/RANSAC floor-aligned clouds; preserve Room with one rigid transform, use explicit single-floor per-view constraints for Coorg, and retain camera/point provenance.
+- **Reference:** “Floor-constrained point-cloud postprocessing” in [PLANS.md](PLANS.md).
 
 ## Current Progress
 
-### Reconstruction interface
+### Floor alignment after user review
+
+- **Recorded `21-10-26 16:05:39 IST`:** Real SegFormer-B2 ADE20K floor/rug masks
+  were inferred for all 197 views. Visually inspected both
+  `outputs/<capture>/floor_diagnostics/floor_masks.jpg` sheets: visible floor/tiles
+  are generally detected, but masks can omit rug areas or contain boundary errors.
+  Coorg's original local floor normals differed by up to 18 degrees.
+- Added optional `floor` dependencies, public floor-estimation/transform APIs and
+  root `align_floor.py`. All original reconstruction artifacts are retained.
+- Saved `outputs/room_m_block/floor_aligned/point_cloud.ply` using one global rigid
+  transform, and `outputs/coorg_bnb/floor_aligned/point_cloud.ply` using per-view
+  constraints. Each still has **1,000,000** RGB points and unchanged per-point
+  confidence, source frame index and pixel identity. Both use Z-up, floor Z=0,
+  arbitrary scene units; unrelated scenes do not share an XY origin or metric scale.
+- Room supplied **7/36** reliable local planes, used only for diagnosis; its global
+  rigid transform leaves relative geometry unchanged. Coorg supplied **90/161**
+  reliable planes; the remaining 71 use source-time interpolation/extrapolation.
+  The longest gap between reliable Coorg anchors is **27.18 s**.
+- On Coorg's reliable-view fitting samples, median / p95 floor residual fell
+  **0.01693 / 0.06824 → 0.000840 / 0.005185**. On all **736,706** confident semantic
+  floor pixels (including rejected/interpolated views), median / p90 / p95 fell
+  **0.01708 / 0.05843 / 0.07504 → 0.001017 / 0.009548 / 0.04554** scene units.
+- Real ALIKED/LightGlue correspondence diagnostic: **36** adjacent-frame pairs,
+  **7,773** matched confident 3D observations; median / p90 disagreement was
+  **0.12430 / 0.54203 → 0.12699 / 0.54342**. Floor consistency improves, but general
+  registration accuracy does not; per-view corrections can move walls/objects.
+- Verified proper rotations, exact source colors/confidence/frame/pixel provenance,
+  camera/extrinsic consistency, transformed plane equations and real PLY readback.
+  Maximum sampled within-view distance change is **1.20e-7** scene units (float32).
+  Inspected both `floor_aligned/floor_comparison.png` headless plots: Coorg's
+  dominant floor band is much tighter, with residual outliers. Room's leveled
+  geometry is identical before/after. No GUI viewer or tests were run.
+- Full process, reproduction commands, assumptions and artifact contracts are in
+  [the reconstruction guide](RECONSTRUCTION.md#floor-detection-and-alignment).
+- Ruff lint/format checks on the floor module, public exports and both root scripts,
+  `uv lock --check` and `git diff --check` pass. The public transform function exactly
+  reproduces both saved aligned clouds. Real inference through the new segmentation
+  function exactly reproduces the inspected Coorg view-0 floor mask.
+
+### GPU capture execution
+
+- **Recorded `21-10-26 12:54:56 IST`:** `git pull origin feat/reconstruction`
+  fast-forwarded `6018f86` to `175fb6f`; active branch is `feat/reconstruction`.
+- Installed preprocessing dependencies with `uv sync --extra revisits --group dev`,
+  then ran `uv run --extra revisits namma-preprocess videos/room_m_block.mp4` and
+  `uv run --extra revisits namma-preprocess videos/coorg_bnb.mp4` separately.
+  Outputs reproduce the 36/161 geometry and 101/399 appearance counts below.
+  Revisit inference used CPU because the initial CUDA 13 PyTorch build was
+  incompatible with driver 535.309.01; both passes completed successfully.
+- Visually inspected `debug/room_m_block_keyframes_00.jpg` and
+  `debug/coorg_bnb_keyframes_00.jpg` under the corresponding preprocessing outputs.
+  Exports are upright; later Room views visibly retain physical phone roll.
+  Coorg's first sheet shows the door/window/floor sweep and its low-texture labels.
+- `uv sync --extra revisits --extra reconstruction --extra viewer --group dev`
+  now installs the official Linux CUDA 12.6 builds, PyTorch **2.14.1+cu126** and
+  torchvision **0.29.1+cu126**, plus Open3D **0.20.0**. A real CUDA matrix
+  multiplication passes on the **NVIDIA RTX A4000 (16 GB)**.
+- Room: all **36 views** jointly inferred at **518×518**, **bfloat16**.
+  Coorg: default 518 resolution failed with CUDA out-of-memory; retry with
+  `--image-size 252` jointly inferred all **161 views** at **252×252**, **bfloat16**.
+  Neither run drops frames or merges independently inferred chunks.
+- Each capture's `outputs/<capture>/reconstruction/` contains `predictions.npz`,
+  `metadata.json`, `preview.json`, `point_cloud.npz` and `point_cloud.ply`.
+  Both clouds have **1,000,000 RGB points**, use depth-derived geometry, discard
+  the bottom confidence quartile, and include observations from every input view.
+  Each PLY is **25.75 MiB**. Units are arbitrary scene units, not metres.
+- Artifact validation: source frame IDs/order exactly match the preprocessing
+  geometry pool; depth shapes are `[36, 518, 518]` / `[161, 252, 252]`; camera
+  matrices and cloud XYZ/confidence are finite. Real Open3D PLY readback matches
+  saved NPZ XYZ and RGB exactly for both captures.
+- Added root `view_point_cloud.py`, a thin CLI around the existing Open3D viewer.
+  Per user instruction, no tests are added or run and the viewer is not executed.
+  Interactive reconstructed-scene quality remains unassessed.
+- `uv run --no-sync ruff check view_point_cloud.py`,
+  `uv run --no-sync ruff format --check view_point_cloud.py`, `uv lock --check`
+  and `git diff --check`: passed.
+
+### Reconstruction interface (initial verification, 21-10-26 12:08:13 IST)
 
 - **Recorded `21-10-26 12:08:13 IST`:** `VGGTInference` loads lazily and exposes
   reusable `load()`, `predict()` and `unload()`. It supports one image or ordered
@@ -56,10 +135,11 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 - `uv run --no-sync ruff check src tests get_recon.py preprocess_capture.py --exclude src/reconstruction/deps`:
   passed. Formatting checks on new modules/tests/public exports and root script pass.
   Root CLI help and `git diff --check` pass.
-- The real Open3D RGB PLY round-trip test is skipped: the 382.2 MiB Open3D wheel
+- The real Open3D RGB PLY round-trip test was initially skipped: the 382.2 MiB Open3D wheel
   download exceeded both the 120 s and 300 s installation timeouts. No fake viewer
   substitutes for that check. Interactive GUI viewing and visual reconstructed-scene
-  inspection are not run. Pretrained CUDA inference is not run per user instruction.
+  inspection were not run at that stage. Pretrained CUDA inference was deferred
+  until this GPU-machine execution request; see the newer results above.
 
 ### Frozen preprocessing results
 
@@ -134,10 +214,14 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 
 ## Blockers
 
-- Larger-GPU pretrained inference remains to be verified externally. There is no
-  claimed reconstructed-capture result or visual inspection from this laptop.
-- Open3D runtime/PLY round-trip verification awaits a completed viewer dependency
-  installation; its large wheel download timed out locally.
+- Floor constraints assume one flat storey. Semantics/depth errors remain, 71 Coorg
+  views lack an accepted local plane, and per-view leveling is not bundle adjustment.
+  Further consistency requires actual multi-view optimization, not more flattening.
+- Interactive point-cloud quality review is pending the user's return; the standalone
+  viewer has intentionally not been run.
+- Coorg's full 161-view geometry pool exceeds the A4000's memory at 518 resolution.
+  A complete joint reconstruction is available at 252 resolution; higher-resolution
+  full-pool inference needs more GPU memory or an explicitly adopted memory strategy.
 - No preprocessing execution or dependency blockers remain for the supplied SDR videos.
 - Per-frame blur classification is ambiguous for the labelled 49.5 s door at
   analysis resolution; the full pipeline uses context. Conservative self-similarity
@@ -146,9 +230,10 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 
 ## Next Actions
 
-1. On the larger GPU machine, install reconstruction/viewer extras and run `get_recon.py`
-   on a complete geometry pool, following [the reconstruction guide](RECONSTRUCTION.md).
-2. Complete the real Open3D PLY check, open an exported capture cloud, and record visual
-   reconstruction quality, GPU memory usage and inference timing.
+1. Use `uv run --no-sync python view_point_cloud.py outputs/coorg_bnb/floor_aligned/point_cloud.ply`
+   and the corresponding Room path to compare floor-aligned and original clouds.
+2. Record visual reconstruction quality; consider higher-resolution Coorg inference
+   on a larger-memory GPU if needed. Peak GPU memory and inference timings were not
+   measured during these successful runs.
 3. Use verified scene geometry to plan fusion, surface generation and downstream
    navigation. Keep preprocessing frozen and preserve source/candidate provenance.

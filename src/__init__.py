@@ -3,6 +3,7 @@
 from .preprocessing import PreprocessConfig, PreprocessResult, load_result, preprocess_capture
 from .reconstruction import (
     CameraParameters,
+    FloorAlignment,
     FrameProvenance,
     ImageBatch,
     ImageTransform,
@@ -10,17 +11,21 @@ from .reconstruction import (
     ReconstructionResult,
     VGGTInference,
     decode_cameras,
+    estimate_floor_alignment,
     load_images,
     load_preprocessed_frames,
     reconstruct_preprocessed,
     save_point_cloud,
+    segment_floor_images,
     show_point_cloud,
     to_open3d,
+    transform_observations,
     unproject_depth,
 )
 
 __all__ = [
     "CameraParameters",
+    "FloorAlignment",
     "FrameProvenance",
     "ImageBatch",
     "ImageTransform",
@@ -30,13 +35,16 @@ __all__ = [
     "ReconstructionResult",
     "VGGTInference",
     "decode_cameras",
+    "estimate_floor_alignment",
     "load_images",
     "load_preprocessed_frames",
     "load_result",
     "preprocess_capture",
     "reconstruct_preprocessed",
     "save_point_cloud",
+    "segment_floor_images",
     "show_point_cloud",
     "to_open3d",
+    "transform_observations",
     "unproject_depth",
 ]

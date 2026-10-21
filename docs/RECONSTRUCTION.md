@@ -39,8 +39,18 @@ uv run --extra reconstruction --extra viewer namma-reconstruct \
 The wrapper lazily imports an installed `vggt` package, if present, otherwise the
 checked-in submodule. The reconstruction extra declares the used runtime dependencies
 directly, avoiding the upstream demo stack, `numpy<2` pin and GUI OpenCV package.
-The existing project uses NumPy 2 and headless OpenCV. Pretrained inference with
-these dependencies still needs verification on the GPU machine.
+The existing project uses NumPy 2 and headless OpenCV. Pretrained inference and
+Open3D PLY export have run successfully on both supplied captures.
+
+On Linux, the project sources PyTorch and torchvision from the official CUDA 12.6
+index. This avoids the default CUDA 13 wheel's driver incompatibility on the RTX
+A4000 machine (driver 535.309.01). CUDA 12.x minor-version compatibility is used;
+the system CUDA version displayed by `nvidia-smi` need not equal the wheel runtime.
+To retain all pipeline dependencies in one environment:
+
+```sh
+uv sync --extra revisits --extra reconstruction --extra viewer --group dev
+```
 
 Weights for `facebook/VGGT-1B` download on the first `load()` or `predict()` call.
 `model_id` can instead identify a local pretrained directory. Use
@@ -53,11 +63,45 @@ the viewer extra and never loads VGGT or weights:
 
 ```sh
 uv sync --extra viewer
-uv run --extra viewer python get_recon.py --view outputs/room_m_block/reconstruction/point_cloud.ply
+uv run --extra viewer python view_point_cloud.py outputs/room_m_block/reconstruction/point_cloud.ply
+uv run --extra viewer python view_point_cloud.py outputs/coorg_bnb/reconstruction/point_cloud.ply
 ```
+
+`view_point_cloud.py` is a standalone root entry point using the existing Open3D
+viewer module. It accepts a point-cloud path and optional `--title`, without loading
+Torch, VGGT or model weights. `get_recon.py --view PATH.ply` remains supported.
+If all extras are already installed, use `uv run --no-sync python view_point_cloud.py
+PATH.ply` to preserve that environment. The standalone viewer has not been executed;
+interactive qualitative inspection is left to the user.
 
 Open3D supports mouse orbit, pan and zoom; press `H` for controls. The viewer
 preserves exported XYZ without estimating gravity or flipping axes.
+
+### Generated capture clouds (21-10-26)
+
+Both captures were preprocessed separately, then reconstructed using
+`facebook/VGGT-1B`, CUDA on an RTX A4000 (16 GB), automatic **bfloat16** precision,
+the complete geometry pool, stride 1 and no frame-count limit:
+
+```sh
+uv run --no-sync python get_recon.py outputs/room_m_block/preprocessing --device cuda:0 --no-view
+uv run --no-sync python get_recon.py outputs/coorg_bnb/preprocessing --device cuda:0 --image-size 252 --no-view
+```
+
+| Capture | Joint views | Padded model resolution | Exported points | Cloud |
+| --- | ---: | --- | ---: | --- |
+| Room | 36 | 518×518 | 1,000,000 | `outputs/room_m_block/reconstruction/point_cloud.ply` |
+| Coorg | 161 | 252×252 | 1,000,000 | `outputs/coorg_bnb/reconstruction/point_cloud.ply` |
+
+Coorg at the default 518 resolution exhausted GPU memory. Its successful run
+explicitly reduces resolution, preserving all 161 views in one scene coordinate
+system. Room uses the default resolution. Both exports use depth-derived points,
+discard the bottom confidence quartile and cap the cloud at one million points.
+Every selected view contributes points. PLY XYZ and RGB were read back with
+Open3D and matched exactly to the saved NPZ; camera matrices and cloud coordinates
+are finite. No interactive viewer or qualitative reconstructed-scene inspection
+was run. Outputs are local generated artifacts under the repository's ignored
+`outputs/` directory.
 
 ## Artifacts
 
@@ -68,6 +112,100 @@ preserves exported XYZ without estimating gravity or flipping axes.
 | `point_cloud.ply` | Filtered coloured point cloud readable by Open3D. |
 | `point_cloud.npz` | The same cloud's XYZ, uint8 RGB, confidence, frame indices and model-pixel XY. |
 | `preview.json` | View selection, cloud source, filter settings and counts. |
+
+## Floor detection and alignment
+
+`align_floor.py` exports a separate floor-aligned cloud from a saved reconstruction.
+It preserves the original files and point count, RGB, confidence, frame indices
+and model-pixel identities. Install its semantic-model and Open3D dependencies:
+
+```sh
+uv sync --extra revisits --extra reconstruction --extra viewer --extra floor --group dev
+```
+
+The implementation in `src/reconstruction/floor.py`:
+
+1. Runs pretrained `nvidia/segformer-b2-finetuned-ade-512-512` on saved model-grid
+   RGB. Pixels must be classified as **floor** or **rug**, with combined probability
+   above **0.6**. Padding is excluded and a **5×5 erosion** removes uncertain borders.
+2. Reads the corresponding saved world points and head confidence. It retains
+   candidate floor observations above each frame's **40th confidence percentile**,
+   sampling at most **4,000** points per view. The source matches `preview.json`:
+   depth-derived points or direct point-head predictions, never a mixture.
+3. Fits a dominant scene plane and local planes using **1,000-iteration RANSAC**.
+   The distance threshold is **0.5%** of the median camera-to-floor-observation
+   distance, in arbitrary scene units. Local planes require at least **200** sampled
+   points, **60%** inliers, broad two-dimensional support and a normal within **25°**
+   of the dominant plane. Normals face towards the observing camera.
+4. In `--mode rigid` (default), applies one rigid rotation/translation to the whole
+   scene, giving **Z-up and floor Z=0**. Scene dimensions and inter-view alignment
+   are preserved. This levels the floor but cannot remove reconstruction drift.
+5. In `--mode per-view`, additionally rotates each view's entire geometry minimally
+   about its camera and translates vertically to make its estimated floor plane
+   agree with the reference. Missing local planes are interpolated in capture time;
+   the first/last estimate is held outside the anchor range. Local geometry is rigid,
+   not individually flattened or scaled. Adjusted camera poses are exported too.
+
+**Assumption:** per-view correction is for one genuinely flat, single-storey floor.
+It does not support steps or separate storeys and is not bundle adjustment. It may
+change cross-view alignment of walls/objects. Independent venues share the floor
+convention, not an XY origin or a known metric scale. Semantic errors and distorted
+depth can leave floor outliers; masks are detection hypotheses, not ground truth.
+
+The runs for these captures used visually inspected masks:
+
+```sh
+uv run --no-sync python align_floor.py outputs/room_m_block/reconstruction --mode rigid --floor-masks outputs/room_m_block/floor_diagnostics/semantic_masks.npz
+uv run --no-sync python align_floor.py outputs/coorg_bnb/reconstruction --mode per-view --floor-masks outputs/coorg_bnb/floor_diagnostics/semantic_masks.npz
+```
+
+Omit `--floor-masks` to run segmentation from scratch (`--device cpu` is supported
+for segmentation). A cached mask archive must match the prediction grid and identify
+the supported semantic model. When present, cached frame IDs and RGB hashes are
+also checked; use archives exported by this command for provenance-checked reuse.
+`--output-dir` overrides the default sibling `floor_aligned/` directory.
+
+| Capture | Mode | Reliable local planes | Points |
+| --- | --- | ---: | ---: |
+| Room | Global rigid leveling | 7 / 36 | 1,000,000 |
+| Coorg | Per-view floor constraint | 90 / 161 | 1,000,000 |
+
+For Coorg's **reliable-view fitting samples**, median / p95 absolute floor height
+improved from **0.01693 / 0.06824** to **0.000840 / 0.005185** scene units.
+Over **all 736,706 confident semantic floor pixels**, including rejected/interpolated
+views and outliers, median / p90 / p95 improved from **0.01708 / 0.05843 / 0.07504**
+to **0.001017 / 0.009548 / 0.04554**. The longest gap between reliable floor anchors
+is **27.18 s**. Room's geometry is unchanged apart from its coordinate transform.
+
+A separate real ALIKED/LightGlue diagnostic on 36 adjacent-frame pairs (7,773
+ambiguity-filtered matched observations) measured median 3D disagreement
+**0.12430 → 0.12699** and p90 **0.54203 → 0.54342**. This is a floor-consistency
+correction, not an improvement in general multi-view correspondence accuracy.
+Headless side-view plots confirm a much tighter dominant Coorg floor band, with
+remaining outliers. Interactive Open3D viewing has not been run by the agent.
+
+### Aligned outputs and viewing
+
+Each `outputs/<capture>/floor_aligned/` contains:
+
+- `point_cloud.ply` / `point_cloud.npz`: corrected observations, original colors and provenance.
+- `alignment.npz`: global and per-view original-world-to-aligned transforms, estimated
+  floor planes, reliable-frame mask, adjusted camera poses/extrinsics and frame IDs.
+- `alignment.json`: plane support, interpolation status, settings, coordinate contract,
+  source hashes and residuals. `X_aligned = T[:3,:3] @ X_original + T[:3,3]`.
+- `semantic_masks.npz`: floor masks, frame IDs, model name and model-RGB checksum.
+- `validation.json`, `floor_comparison.png`: numeric verification and inspected headless
+  comparison plots from this execution; these are diagnostic artifacts, not CLI outputs.
+  Coorg also has `correspondence_validation.json` for the matched-feature diagnostic.
+
+The original `predictions.npz` and camera arrays retain the original coordinate frame.
+Use the exported transforms and adjusted cameras when combining them with an aligned
+cloud. The CLI does not duplicate or rewrite dense prediction archives.
+
+```sh
+uv run --no-sync python view_point_cloud.py outputs/coorg_bnb/floor_aligned/point_cloud.ply
+uv run --no-sync python view_point_cloud.py outputs/room_m_block/floor_aligned/point_cloud.ply
+```
 
 Read processed arrays without Torch or VGGT:
 
@@ -250,8 +388,10 @@ serialization, lazy imports and a real short-video preprocessing handoff. The Op
 test performs a real coloured PLY round trip with the viewer extra; otherwise it is
 explicitly skipped. No fake model substitutes for pretrained inference.
 
-Pretrained CUDA inference and interactive reconstructed-capture inspection have not
-been run on the laptop, per the GPU-only execution requirement. See
+Pretrained CUDA inference and headless PLY export/readback have now run on the RTX
+A4000 machine, as recorded above. No tests were added or run for this execution and
+viewer request. The standalone viewer was linted but not executed. Interactive
+reconstructed-capture inspection remains pending user review. See
 [Project state](STATE.md) for verification results and blockers.
 
 Upstream references: [VGGT](https://github.com/facebookresearch/vggt) and
