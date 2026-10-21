@@ -20,8 +20,19 @@ packages = ["src"]
 
 [project.scripts]
 namma-preprocess = "src.preprocessing.cli:main"
+namma-reconstruct = "src.reconstruction.cli:main"
 
 [project.optional-dependencies]
+reconstruction = [
+    "einops>=0.8",
+    "huggingface-hub>=0.34",
+    "pillow>=10",
+    "safetensors>=0.5",
+    "torch>=2.14.1",
+]
+viewer = [
+    "open3d>=0.19",
+]
 revisits = [
     "lightglue",
     "torch>=2.14.1",
