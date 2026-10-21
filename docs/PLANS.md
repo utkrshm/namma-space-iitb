@@ -14,6 +14,16 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 21-10-26 11:48:44 IST — CUDA VGGT inference and Open3D reconstruction preview
+
+- **Status:** Adopted following user clarification.
+- **Decision:** Add a reusable vanilla VGGT wrapper under `src/reconstruction/`, an adapter consuming the frozen preprocessing `load_result()` contract, and root script `get_recon.py`. Run all selected views jointly on a larger CUDA GPU. Use Open3D for coloured point-cloud export and interactive viewing. Do not run model inference on the development laptop.
+- **Rationale and trade-offs:** Joint inference gives one scene coordinate system; independently inferred chunks cannot be concatenated without alignment. Default to full-field-of-view, patch-aligned resize and padding, with explicit pixel transforms and valid masks. Preserve frame identity, timestamps and source rotation. Depth and geometry remain in arbitrary VGGT scene units, not metres. The preview concatenates filtered observations; it does not claim surface fusion, a mesh, or a navigation-ready digital twin.
+- **Affected components:** New reconstruction modules and tests, stage public exports, optional `reconstruction`/`viewer` dependencies, `get_recon.py`, architecture/state and reconstruction usage documentation. The preprocessing implementation and its artifacts are frozen.
+- **Implementation steps:** Define CPU NumPy output contracts; implement lazy model loading, CUDA precision selection, camera decoding and depth unprojection; adapt ordered geometry/appearance records; save arrays/provenance plus PLY; provide Open3D viewing of new or existing PLY files.
+- **Dependency boundary:** Load the checked-in VGGT submodule lazily and declare its inference runtime dependencies explicitly. Avoid installing its upstream demo stack or its conflicting `numpy<2`/GUI OpenCV requirements into the frozen preprocessing environment. Keep Open3D separately installable for CPU-only viewing of an exported cloud.
+- **Completion criteria:** Focused image-transform, geometry, filtering, preprocessing-handoff and serialization tests pass without a fake model; lint passes; CLI help and import checks run locally. Pretrained CUDA inference and interactive reconstructed-scene inspection are explicitly recorded as not run on this laptop.
+
 ## 21-10-26 02:39:40 IST — Reject descriptor-ambiguous repeated structures
 
 - **Status:** Adopted following round-three user review.

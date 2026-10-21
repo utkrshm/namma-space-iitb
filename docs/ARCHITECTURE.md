@@ -137,7 +137,7 @@ The capture Standard Operating Procedure guides how a person records an indoor s
 
 ## 2. Video ingestion and preprocessing
 
-This stage decodes the video and extracts frames while preserving their source identity and timing. Quality filtering identifies unusable observations, such as severely blurred frames. Keyframe selection reduces redundant views while retaining useful coverage and connections between parts of the scene. This stage is the current implementation focus.
+This stage decodes the video and extracts frames while preserving their source identity and timing. Quality filtering identifies unusable observations, such as severely blurred frames. Keyframe selection reduces redundant views while retaining useful coverage and connections between parts of the scene. This stage is frozen after verification on the supplied captures.
 
 The stage is model-independent: it does not resize, reorder or group frames for a particular reconstruction model. The default input is one continuous video per venue with deliberate revisits; short patch clips may be added. The package is `src/preprocessing`, and its public entry point is `preprocess_capture(clips, output_dir, config=None, resume=True)`. Thresholds are in `configs/preprocessing.toml`.
 
@@ -201,9 +201,40 @@ The geometric front end estimates spatial information from the selected images. 
 
 VGGT and VGGT-Ω are examples shown in the diagram. The available predictions, and whether point maps or tracks are produced directly or derived separately, depend on the selected method.
 
+### Implemented VGGT interface
+
+`src/reconstruction/` provides `VGGTInference`, with explicit `load()`, reusable
+`predict()` and `unload()` methods. Each call jointly infers one image or an ordered
+sequence representing one scene on a larger CUDA GPU. Pretrained inference is not
+run on the development laptop. Torch, weights and Open3D are loaded lazily.
+
+`load_preprocessed_frames()` consumes the frozen `load_result()` handoff, defaults
+to geometry frames, and orders views by clip then source PTS. Model-specific
+preparation resizes and pads without cropping. Frame IDs, timestamps, selected-frame
+rotation metadata, valid-image masks and pixel-centre transforms are retained.
+`reconstruct_preprocessed()` passes those views jointly to VGGT; graph optimization
+and independent-chunk alignment are not part of this adapter.
+
+The CPU `ReconstructionResult` includes model-grid RGB, depth/confidence, camera
+encodings and decoded matrices, direct point maps/confidence, depth-derived world
+points and optional tracks/visibility/confidence. OpenCV extrinsics map world to
+camera (`X_cam = R X_world + t`); inverse poses and upright-source intrinsics are
+also supplied. Geometry uses arbitrary scene units, not metric scale.
+
+The root script `get_recon.py` and `namma-reconstruct` entry point save processed
+arrays/provenance and a filtered RGB point cloud under
+`outputs/<capture_id>/reconstruction/`. Open3D exports and displays the cloud.
+`--no-view` supports headless GPU export; `--view existing.ply` views saved geometry
+without model loading. Array shapes, preparation and commands are documented in
+[Running VGGT reconstruction](RECONSTRUCTION.md).
+
 ## 4. Geometric reconstruction
 
 Reconstruction combines the estimated observations into a coherent scene representation. It aligns and fuses points, removes inconsistent observations, estimates surfaces and generates geometry suitable for downstream use. The visual representation and the geometry used for spatial reasoning serve different purposes.
+
+The implemented preview currently concatenates confidence-filtered observations in
+VGGT's shared scene frame, excluding padded/invalid geometry and optionally limiting
+the point count. It is a point-cloud preview, not a fused surface or navigation mesh.
 
 ### Photorealistic representation: 3D Gaussian splatting
 

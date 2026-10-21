@@ -2,13 +2,14 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `21-10-26 03:09:09 IST`
+**Last updated:** `21-10-26 12:08:13 IST`
 
 ## Current Focus
 
-Round-three review corrections applied: descriptor self-similarity filtering rejects
-repeated-window ambiguity. Real positive/negative revisit controls and a real
-spliced-input tracking-break control pass. User commit `4a6a0a3` is retained.
+Preprocessing is frozen. The VGGT wrapper, preprocessed-frame adapter and Open3D
+point-cloud script are implemented on `feat/reconstruction`. CPU processing and
+handoff checks pass. Pretrained inference is reserved for a larger CUDA GPU; no
+model was instantiated or run on this laptop.
 
 ## Stage Status
 
@@ -18,15 +19,49 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 | --- | --- |
 | Documentation scaffolding | Verified |
 | Preprocessing | Verified on supplied captures; conservative repeated-structure filtering, known per-frame blur ambiguity |
-| Reconstruction, scene understanding and navigation | Planned |
+| VGGT inference and point-cloud preview | Implemented (awaiting larger-GPU inference and Open3D runtime verification) |
+| Surface reconstruction, scene understanding and navigation | Planned |
 
 ## Latest Decision
 
-- **Timestamp:** `21-10-26 02:39:40 IST`
-- **Decision:** Reject repeated-structure descriptor ambiguity before geometric verification; use pass-specific cache provenance.
-- **Reference:** “Reject descriptor-ambiguous repeated structures” in [PLANS.md](PLANS.md).
+- **Timestamp:** `21-10-26 11:48:44 IST`
+- **Decision:** Joint CUDA-only vanilla VGGT inference with CPU NumPy outputs and Open3D export/viewing; keep preprocessing frozen and do not run model inference on the laptop.
+- **Reference:** “CUDA VGGT inference and Open3D reconstruction preview” in [PLANS.md](PLANS.md).
 
 ## Current Progress
+
+### Reconstruction interface
+
+- **Recorded `21-10-26 12:08:13 IST`:** `VGGTInference` loads lazily and exposes
+  reusable `load()`, `predict()` and `unload()`. It supports one image or ordered
+  multi-view input, CUDA precision selection and optional first-image tracking queries.
+- CPU outputs include depth/confidence, direct point maps/confidence, depth-derived
+  world points, camera encodings/iterations, model/original intrinsics, inverse poses,
+  optional tracks and source provenance. Coordinates and arbitrary scene units are
+  explicit in [the reconstruction contract](RECONSTRUCTION.md).
+- The preprocessing adapter consumes `load_result()`, defaults to geometry frames,
+  preserves clip/PTS order and source timing/rotation, and records model-specific
+  resize/padding transforms. The preprocessing source and existing capture artifacts
+  are unchanged. All selected views run jointly; there is no unaligned chunk merging.
+- `get_recon.py` / `namma-reconstruct` export processed arrays, metadata, preview
+  settings and coloured point clouds. `--no-view` supports headless export;
+  `--view existing.ply` loads only Open3D, without Torch or model weights.
+- `uv lock --check`: passed. `uv sync --extra revisits --extra reconstruction`:
+  passed, retaining existing revisit dependencies. Actual upstream VGGT model-class
+  and camera-decoder imports pass without instantiating a model.
+- `uv run --no-sync pytest tests/reconstruction -q -ra`: **8 passed, 1 skipped in
+  13.69 s**. Real short-video preprocessing/handoff, relocatability, image transforms,
+  analytic camera/depth reprojection, confidence filtering, NumPy/JSON serialization,
+  query validation, CLI validation and lazy imports are covered without model inference.
+- `uv run --no-sync ruff check src tests get_recon.py preprocess_capture.py --exclude src/reconstruction/deps`:
+  passed. Formatting checks on new modules/tests/public exports and root script pass.
+  Root CLI help and `git diff --check` pass.
+- The real Open3D RGB PLY round-trip test is skipped: the 382.2 MiB Open3D wheel
+  download exceeded both the 120 s and 300 s installation timeouts. No fake viewer
+  substitutes for that check. Interactive GUI viewing and visual reconstructed-scene
+  inspection are not run. Pretrained CUDA inference is not run per user instruction.
+
+### Frozen preprocessing results
 
 - **Recorded `21-10-26 03:09:09 IST`:** Round-three corrections are implemented and both
   full captures rerun. See [review results and every accepted pair](PREPROCESSING_REVIEW.md)
@@ -99,7 +134,11 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 
 ## Blockers
 
-- No execution or dependency blockers remain for the supplied SDR videos.
+- Larger-GPU pretrained inference remains to be verified externally. There is no
+  claimed reconstructed-capture result or visual inspection from this laptop.
+- Open3D runtime/PLY round-trip verification awaits a completed viewer dependency
+  installation; its large wheel download timed out locally.
+- No preprocessing execution or dependency blockers remain for the supplied SDR videos.
 - Per-frame blur classification is ambiguous for the labelled 49.5 s door at
   analysis resolution; the full pipeline uses context. Conservative self-similarity
   filtering can discard true loop links, as observed for one luggage pair.
@@ -107,7 +146,9 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 
 ## Next Actions
 
-1. User review of the four accepted match images and reported conservative rejections.
-2. Consider higher-resolution or richer blur evidence if a context-free decision is required.
-3. Integrate reconstruction through `load_result(output_dir)` and use global geometry
-   to evaluate tentative loop links. Preserve source and candidate provenance.
+1. On the larger GPU machine, install reconstruction/viewer extras and run `get_recon.py`
+   on a complete geometry pool, following [the reconstruction guide](RECONSTRUCTION.md).
+2. Complete the real Open3D PLY check, open an exported capture cloud, and record visual
+   reconstruction quality, GPU memory usage and inference timing.
+3. Use verified scene geometry to plan fusion, surface generation and downstream
+   navigation. Keep preprocessing frozen and preserve source/candidate provenance.
