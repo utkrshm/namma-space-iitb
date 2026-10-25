@@ -218,6 +218,137 @@ with np.load("outputs/room_m_block/reconstruction/predictions.npz", allow_pickle
     camera_to_world = data["camera_to_world"]
 ```
 
+## High-resolution section alignment
+
+The Coorg section-alignment experiment was motivated by direct inspection of the
+initial 161-view, 252×252 reconstruction: duplicated/warped surfaces and detached
+dining-area geometry remained after floor alignment. Its scope is section-level
+registration and a globally optimized Sim(3) graph. Observation fusion and further
+multi-view geometry correction are deferred.
+
+### Setup and execution
+
+Retain the installed pipeline extras and add the numerical solver:
+
+```sh
+uv sync --extra alignment --extra reconstruction --extra viewer --extra revisits --extra floor --group dev
+```
+
+The initial experiment inferred six 36-frame sections at 518×518, with 11 shared
+frames between neighbors. Actual portrait content is 294×518; the remainder is
+padding. Every section fit on the 16 GB A4000. The final dining overlap lacked
+multi-frame consensus, so smaller tail windows with earlier context were tested
+without changing resolution or removing source frames. The explicit repaired
+configuration is:
+
+```sh
+uv run --no-sync python align_sections.py outputs/coorg_bnb/preprocessing \
+  --tail-section-size 24 --tail-start-section 4 --local-files-only --inference-only
+```
+
+This preserves four 36-frame windows starting at zero-based positions
+`0, 25, 50, 75`, then uses 24-frame windows starting at `100, 113, 126, 137`.
+It covers all 161 selected geometry frames. Inference is sequential, bfloat16,
+full-field-of-view, and resumable. Cache checks include model pixels, frame
+provenance/timestamps, pixel transforms and validity masks. Incompatible window
+artifacts are archived under `section_alignment/experiments/`; they are not merged
+into the active reconstruction. OOM is an error, not an implicit lower-resolution run.
+
+Build/reverify revisit constraints, align the sections with the optional ICP
+experiment, export the graph/cloud, and compare with the original reconstruction:
+
+```sh
+OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync python validate_section_alignment.py \
+  outputs/coorg_bnb/section_alignment \
+  --preprocessing-dir outputs/coorg_bnb/preprocessing \
+  --baseline-dir outputs/coorg_bnb/reconstruction
+```
+
+`align_sections.py` without `--inference-only` runs inference/resume and alignment
+together, including verified revisits. `--skip-inference` uses an existing manifest;
+`--no-revisits` is an explicitly adjacent-only diagnostic. `--no-icp` skips the ICP
+experiment. Benchmark an existing final graph without rebuilding it:
+
+```sh
+OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync python validate_section_alignment.py \
+  outputs/coorg_bnb/section_alignment \
+  --preprocessing-dir outputs/coorg_bnb/preprocessing \
+  --baseline-dir outputs/coorg_bnb/reconstruction --benchmark-only
+```
+
+Inspect the actual saved PLY headlessly, then open it on a graphical display:
+
+```sh
+uv run --no-sync python inspect_section_alignment.py outputs/coorg_bnb/section_alignment \
+  --baseline-dir outputs/coorg_bnb/reconstruction
+uv run --no-sync python view_point_cloud.py outputs/coorg_bnb/section_alignment/point_cloud.ply
+```
+
+### Alignment and acceptance
+
+- Adjacent sections share exact source frames and model-grid pixels. Padding,
+  nonpositive/nonfinite depths and the lowest confidence quartile are excluded
+  from registration evidence. Both registration and export use depth-derived
+  points, never a mixture with the direct point head.
+- Samples are balanced over frames and spatial cells. Weighted Umeyama in RANSAC
+  initializes scale/rotation/translation; robust refinement reduces the effect
+  of depth errors. Fit tolerance is 3% of target camera-to-observation distance,
+  in target scene units. Three whole interior overlap frames are held out where
+  available; the first/last shared views are separate endpoint stress observations.
+  Neither held-out group enters fitting. Five-frame overlaps use three train/two
+  validation frames without separate stress views.
+- A connection needs consensus across at least three training frames/two cells,
+  pooled held-out median at most 0.10 of target camera-to-observation distance,
+  and at least two held-out frames individually below that threshold. Upper tails
+  and inconsistent individual views remain visible in reports and exports.
+- Real ALIKED/LightGlue revalidates conservative preprocessing revisit candidates.
+  Depth-valid image support, 3D extent, training consensus and held-out support
+  must remain broad; a tiny well-fitting patch cannot anchor section scale.
+- Multiscale robust point-to-plane ICP estimates a rigid correction after scale
+  initialization. It must improve paired held-out median by at least 1%, avoid
+  p90 regression above 2%, stay within translation/rotation limits and preserve
+  absolute overlap quality. Nearest-neighbor fitness alone does not accept ICP.
+- Global optimization uses robust relative Sim(3) constraints and fixes section 0.
+  Held-out overlap gates are rechecked after optimization. A single similarity
+  per section does not fix internal per-view depth/pose distortion.
+
+### Saved contract and verification
+
+Everything is under `outputs/coorg_bnb/section_alignment/`:
+
+| Artifact | Contents |
+| --- | --- |
+| `manifest.json` | Ordered source identities/provenance, image transforms/hashes, section configuration and timings/memory. |
+| `section_XX/` | Original per-section predictions, metadata and local RGB PLY. |
+| `overlap_XX_YY.npz` | Exact paired train/interior-held-out/endpoint-stress points, weights, source indices and pixels. |
+| `revisit_graph.json`, `revisit_correspondences/` | Real image/3D verification decisions and fit/held-out observations. |
+| `graph.json`, `graph.npz` | Measurements, initial/optimized section similarities, optimizer diagnostics and post-graph validation. |
+| `alignment_report.json` | Per-edge support, validation, duplicate-camera agreement, ICP decisions and owner assignment. |
+| `point_cloud.ply`, `point_cloud.npz` | Final XYZ/RGB and matching confidence/frame/pixel/section provenance, cameras and scaled z-depth. |
+| `section_benchmark.json`, `benchmark_observations.npz` | Identical-support comparison with the old 252 reconstruction and held-out loop diagnostics. |
+| `inspection/` | Actual-PLY RGB/section-colored multi-angle renders, top/side comparisons, section/boundary/camera views and inspection metadata. |
+| `experiments/` | Superseded section predictions retained for diagnosis. |
+
+Coordinates use section 0's arbitrary frame and scale, **not a gravity/floor frame**.
+For `X_global = s R X_section + t`, camera centers transform with `s,R,t`, camera
+orientations with `R` only, and z-depth with `s`. NPZ `camera_translations` contains
+the full rigid world-to-camera `[R|t]` matrix; `depths` corresponds to exported points.
+One owner section supplies each source frame; overlapping copies are not averaged
+or spatially fused. Colors/confidence/pixels retain their observation identity.
+
+The benchmark uses real ambiguity-filtered image features on every fourth adjacent
+pair plus owner-boundary pairs. Both reconstructions are evaluated on exactly the
+same features surviving both models' confidence/validity checks. Each method uses
+one median camera-to-observation distance for scale normalization, so arbitrary
+global units cannot by themselves produce an improvement. Raw distances and
+denominators are retained. These are consistency measurements, not ground-truth
+accuracy. PLY/NPZ equality, all-frame contribution, proper camera rotations,
+inverse extrinsics and scaled point depths are also checked.
+
+Inspection fits a visualization-only similarity from shared source pixels, then
+uses the original floor transform for common top/side display. This does not alter
+the final cloud. Execution results and remaining limitations are in [STATE.md](STATE.md).
+
 ## Python interface
 
 ### Reusing a loaded model

@@ -2,16 +2,19 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `25-10-26 12:41:11 IST`
+**Last updated:** `25-10-26 14:23:56 IST`
 
 ## Current Focus
 
 Work is on `fix/recon-section-alignment`, motivated by inspecting the initial
 Coorg BnB reconstruction against its source frames: overlapping/warped surfaces,
 detached fragments and inconsistent camera/depth geometry persist after floor
-leveling. The adopted experiment reconstructs all 161 selected Coorg frames at
-518 resolution in overlapping 36-view sections, then aligns a global Sim(3) graph.
-Only section alignment is in scope; observation fusion remains deferred.
+leveling. All 161 selected Coorg frames now have a 518-resolution section-aligned
+export: four 36-view sections plus four 24-view tail sections, with an optimized
+eight-node/13-edge Sim(3) graph. Independent matched-observation consistency and
+actual-PLY visual inspection improve substantially over the initial 252 run.
+Residual wall/pose distortion and imperfect loop closure remain. Observation fusion
+is deferred pending the user's explicit instruction.
 See the detailed adopted decision in [PLANS.md](PLANS.md).
 
 ## Stage Status
@@ -22,18 +25,88 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 | --- | --- |
 | Documentation scaffolding | Verified |
 | Preprocessing | Verified on supplied captures; conservative repeated-structure filtering, known per-frame blur ambiguity |
-| VGGT inference and point-cloud export | Verified on both captures; interactive qualitative review pending |
+| VGGT inference and point-cloud export | Verified on both captures; Coorg original/section clouds also reviewed headlessly |
 | Floor-plane alignment | Implemented and verified on real outputs; Coorg floor residuals reduced, cross-view drift remains |
-| Coorg high-resolution section alignment | In progress on `fix/recon-section-alignment`; motivated by inspection of initial Coorg outputs |
+| Coorg high-resolution section alignment | Verified on real Coorg outputs: connected global graph, all seven primary handoffs pass, improved consistency and visual structure; residual distortion remains |
 | Surface reconstruction, scene understanding and navigation | Planned |
 
 ## Latest Decision
 
-- **Timestamp:** `21-10-26 15:58:08 IST`
-- **Decision:** Export separate semantic/RANSAC floor-aligned clouds; preserve Room with one rigid transform, use explicit single-floor per-view constraints for Coorg, and retain camera/point provenance.
-- **Reference:** “Floor-constrained point-cloud postprocessing” in [PLANS.md](PLANS.md).
+- **Timestamp:** `25-10-26 14:12:41 IST`
+- **Decision:** Use depth-scaled robust section registration with independent interior handoff validation, explicit endpoint stress reporting, verified revisit constraints and a global Sim(3) solve. Keep the first four 36-view sections and use four 24-view tail sections. Reject ICP corrections that do not improve held-out agreement.
+- **Reference:** “Depth-scaled fitting and independent interior handoff validation” in [PLANS.md](PLANS.md).
 
 ## Current Progress
+
+### Coorg section alignment after inspection of the initial outputs
+
+- **Recorded `25-10-26 14:23:56 IST`:** Completed on the user-created
+  `fix/recon-section-alignment` branch. The motivation was the initial Coorg BnB
+  cloud's warped/duplicated surfaces, detached dining fragments and inconsistent
+  camera/depth estimates when compared with the source video frames.
+- All six initial **36-view, 518×518, bfloat16** sections ran on the A4000. Peak
+  allocation was **9.96 GiB**, with **12.21 GiB** reserved. Their last connection
+  failed independent support checks; neither ICP nor simply shortening the last
+  window repaired the already-distorted preceding section. Superseded predictions
+  remain under `section_alignment/experiments/`.
+- The final configuration preserves 36-view starts **0,25,50,75**, followed by
+  24-view starts **100,113,126,137**, covering all **161** source frames. The smaller
+  windows peaked at **9.37 GiB allocated / 13.30 GiB reserved**. These are measured
+  PyTorch allocator peaks, not estimates of minimum GPU capacity. Actual image
+  content is **294×518** within each padded square.
+- Saved `outputs/coorg_bnb/section_alignment/point_cloud.ply`: **999,971 RGB points**,
+  exactly **6,211 per source frame**, with matching NPZ confidence, source pixel,
+  frame/owner identity, cameras and scaled z-depth. Coordinates use the first
+  section's arbitrary scene frame/scale; no floor correction or fusion is applied.
+- Registration uses exact shared source pixels, frame/cell-balanced evidence,
+  depth-scaled RANSAC/weighted Umeyama and robust refinement. Independent whole
+  interior frames validate owner handoffs; shared endpoints are separate stress
+  observations and are never used for fitting. Four conservative image revisits
+  were reverified using real CPU ALIKED/LightGlue and broad depth-valid/3D support,
+  producing **six section-pair measurements** (some source frames belong to two
+  sections), including two non-adjacent 0–2 constraints.
+- The final **8-node, 13-edge** graph is connected (7 adjacent + 6 revisit
+  measurements). Robust objective fell **0.014445 → 0.003561**. All **seven**
+  post-optimization primary handoffs pass: normalized median **0.0078–0.0497**,
+  p90 **0.0136–0.0965**. This is section-level consistency, not ground-truth accuracy
+  or proof that every surface/loop closes perfectly.
+- **ICP decision:** Tested robust multiscale point-to-plane ICP on every adjacent
+  overlap. **0/7** candidates were retained: six failed the required held-out
+  improvement and one exceeded the allowed translation correction. The final
+  graph/export therefore uses robust Sim(3) registration without ICP corrections.
+- **Independent comparison:** Real ALIKED/LightGlue tested 46 adjacent/owner-boundary
+  pairs; 43 supplied **6,937 identical confidence-eligible feature correspondences**
+  in both old and new reconstructions. Distances divide by one camera-to-observation
+  median per method (**0.52693 old / 0.91638 new** arbitrary units), preserving
+  similarity-scale invariance. Pooled normalized median/p90 fell
+  **0.23158/0.81667 → 0.01435/0.06162**: **93.8% median reduction**. On **1,101**
+  owner-boundary observations, median/p90 fell
+  **0.18310/0.35371 → 0.01220/0.05437**. One boundary pair (frames 55–56) has only
+  two eligible feature matches; dense held-out shared-frame evidence is recorded
+  separately rather than claiming strong independent feature evidence there.
+- **Visual inspection:** Read the actual final and original PLYs. Inspected RGB and
+  section-colored renders from four angles, common top/side plots, all seven
+  boundary correspondence plots, per-section geometry and the camera trajectory.
+  Entrance/living/dining geometry and furniture are substantially more recognizable;
+  the earlier exploded/smeared footprint is much more coherent. Bowed/doubled wall
+  layers and offsets persist around the large wall/door region. At boundary 4/5,
+  endpoint-stress median/p90 remain **0.215/0.312**; several globally evaluated
+  revisit held-out medians remain **0.085–0.130**. These are retained diagnostics,
+  not hidden by observation fusion. The common-display similarity has only
+  **113/1,800** supporting calibration samples and is visualization-only; it does
+  not enter graph optimization, export or the numerical benchmark.
+- **Integrity and review:** Exact actual-PLY XYZ/RGB readback; every source frame
+  contributes; proper rotations/positive section scales; camera inverses and
+  scaled camera-z depths agree. Independent reviewer additionally checked every
+  exported point/color/depth against its original owner-section pixel. No averaging,
+  hidden fusion or cross-owner mixing was found. Parallel implementation agents
+  and an independent reviewer were used; identified direction, unit, support and
+  cache-provenance defects were fixed before the final export.
+- **Checks:** `OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync pytest tests/reconstruction -q`:
+  **52 passed**. Ruff checks/formatting, `uv lock --check` and `git diff --check`
+  pass. Real inference, feature verification, Open3D ICP and headless actual-PLY
+  inspection ran; no interactive GUI was opened. Commands/contracts are in
+  [the section-alignment guide](RECONSTRUCTION.md#high-resolution-section-alignment).
 
 ### Floor alignment after user review
 
@@ -217,14 +290,18 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 
 ## Blockers
 
+- Coorg's initial section-alignment benchmark is met, but residual within-section
+  warping, endpoint pose/depth outliers and conflicting revisit measurements remain.
+  A single similarity per section cannot remove these. Do not advance to observation
+  fusion or multi-view geometry correction until the user explicitly requests it.
 - Floor constraints assume one flat storey. Semantics/depth errors remain, 71 Coorg
   views lack an accepted local plane, and per-view leveling is not bundle adjustment.
   Further consistency requires actual multi-view optimization, not more flattening.
-- Interactive point-cloud quality review is pending the user's return; the standalone
-  viewer has intentionally not been run.
+- Agent headless actual-PLY review is complete for the new section export. User
+  interactive review remains pending; the standalone GUI viewer has not been run.
 - Coorg's full 161-view geometry pool exceeds the A4000's memory at 518 resolution.
-  A complete joint reconstruction is available at 252 resolution; higher-resolution
-  full-pool inference needs more GPU memory or an explicitly adopted memory strategy.
+  A complete joint reconstruction is available at 252 resolution; the implemented
+  overlapping-section strategy now also supplies a complete 518-resolution export.
 - No preprocessing execution or dependency blockers remain for the supplied SDR videos.
 - Per-frame blur classification is ambiguous for the labelled 49.5 s door at
   analysis resolution; the full pipeline uses context. Conservative self-similarity
@@ -233,10 +310,10 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 
 ## Next Actions
 
-1. Use `uv run --no-sync python view_point_cloud.py outputs/coorg_bnb/floor_aligned/point_cloud.ply`
-   and the corresponding Room path to compare floor-aligned and original clouds.
-2. Record visual reconstruction quality; consider higher-resolution Coorg inference
-   on a larger-memory GPU if needed. Peak GPU memory and inference timings were not
-   measured during these successful runs.
-3. Use verified scene geometry to plan fusion, surface generation and downstream
-   navigation. Keep preprocessing frozen and preserve source/candidate provenance.
+1. Review `uv run --no-sync python view_point_cloud.py outputs/coorg_bnb/section_alignment/point_cloud.ply`.
+   RGB/section-colored renders and the detailed inspection are under
+   `outputs/coorg_bnb/section_alignment/inspection/`.
+2. Use `section_benchmark.json`, graph/held-out/stress diagnostics and the source
+   video to review remaining registration and within-section errors.
+3. Await explicit user direction before multi-view observation fusion, surface
+   generation or navigation work. Preserve frozen preprocessing and provenance.

@@ -242,13 +242,50 @@ general multi-view registration. The original reconstruction remains in its orig
 frame; aligned clouds, per-frame transforms and adjusted cameras are explicit
 separate artifacts. See [floor detection and alignment](RECONSTRUCTION.md#floor-detection-and-alignment).
 
+### Overlapping high-resolution section alignment
+
+`src/reconstruction/sections.py` adds an explicit alternative to whole-capture joint
+inference. It reconstructs overlapping source-frame windows sequentially, records
+GPU peak memory and cache provenance, and retains each window's original predictions.
+`section_registration.py` estimates positive-scale, proper-rotation Sim(3) transforms
+from identical source-frame/model-pixel observations using balanced RANSAC and robust
+weighted refinement, with tolerance scaled by camera-to-observation distance.
+Independent whole interior overlap frames validate each connection; shared endpoint
+views remain separate stress diagnostics and are excluded from fitting.
+`section_benchmark.py` revalidates image revisits and their spatially distributed 3D
+support before they become graph constraints. The first section fixes the gauge;
+robust global optimization jointly estimates section-local-to-global similarities.
+
+`section_evaluation.py` tests multiscale robust point-to-plane ICP at the established
+scale. A correction is applied only when exact held-out correspondences improve and
+absolute section-support checks still pass. The optimized graph is checked again
+on held-out overlaps. This is section-level registration, not per-frame bundle
+adjustment: internally inconsistent views can remain within an accepted section.
+
+The root `align_sections.py` orchestrates inference and alignment; separate
+`validate_section_alignment.py` and `inspect_section_alignment.py` provide real
+image-feature comparison against the original reconstruction and headless inspection
+of the saved PLY. Coorg execution writes exclusively under
+`outputs/coorg_bnb/section_alignment/`. Every source frame contributes observations
+from one owner section, selected by distance from section boundaries. No spatial
+observation fusion is performed. Original preprocessing and reconstruction artifacts
+remain separate. See [section alignment](RECONSTRUCTION.md#high-resolution-section-alignment).
+
+At this boundary, `X_global = s R X_section + t`, in arbitrary scene units.
+Camera centers receive the similarity; camera orientations receive only `R`, and
+camera z-depth receives `s`. Exported inverse extrinsics therefore remain rigid.
+Each point retains source frame index, model-pixel identity, confidence and owner
+section; source timestamps/rotations/image transforms remain in the manifest and
+per-section metadata. The PLY contains XYZ/RGB; its NPZ companion carries provenance.
+
 ## 4. Geometric reconstruction
 
 Reconstruction combines the estimated observations into a coherent scene representation. It aligns and fuses points, removes inconsistent observations, estimates surfaces and generates geometry suitable for downstream use. The visual representation and the geometry used for spatial reasoning serve different purposes.
 
-The implemented preview currently concatenates confidence-filtered observations in
-VGGT's shared scene frame, excluding padded/invalid geometry and optionally limiting
-the point count. It is a point-cloud preview, not a fused surface or navigation mesh.
+The implemented previews concatenate confidence-filtered observations in VGGT's joint
+scene frame or the explicitly optimized section frame, excluding padded/invalid
+geometry and optionally limiting the point count. They are point-cloud previews,
+not fused surfaces or navigation meshes.
 
 ### Photorealistic representation: 3D Gaussian splatting
 
