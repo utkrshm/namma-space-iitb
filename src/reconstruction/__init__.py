@@ -17,6 +17,14 @@ from .floor import (
 from .geometry import decode_cameras, unproject_depth
 from .images import load_images
 from .preprocessed import load_preprocessed_frames, reconstruct_preprocessed
+from .section_registration import SectionEdge, Sim3, optimize_section_graph, robust_sim3
+from .sections import (
+    SectionSpec,
+    align_sections,
+    create_sections,
+    run_section_alignment,
+    run_section_inference,
+)
 from .vggt import VGGTInference
 from .visualization import save_point_cloud, show_point_cloud, to_open3d
 
@@ -28,12 +36,21 @@ __all__ = [
     "ImageTransform",
     "PointCloud",
     "ReconstructionResult",
+    "SectionEdge",
+    "SectionSpec",
+    "Sim3",
     "VGGTInference",
+    "align_sections",
+    "create_sections",
     "decode_cameras",
     "estimate_floor_alignment",
     "load_images",
     "load_preprocessed_frames",
+    "optimize_section_graph",
     "reconstruct_preprocessed",
+    "robust_sim3",
+    "run_section_alignment",
+    "run_section_inference",
     "save_point_cloud",
     "segment_floor_images",
     "show_point_cloud",

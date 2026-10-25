@@ -2,15 +2,17 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `21-10-26 16:05:39 IST`
+**Last updated:** `25-10-26 12:41:11 IST`
 
 ## Current Focus
 
-Both full captures have real reconstructed point clouds. User review found uneven
-Coorg floors; separate floor-aligned exports now provide a common Z-up/floor Z=0
-convention. Room uses one global rigid transform; Coorg uses per-view floor
-constraints. Work is on `feat/floor`, branched from `feat/reconstruction` at
-`175fb6f`, per user request. The interactive viewer remains unexecuted by the agent.
+Work is on `fix/recon-section-alignment`, motivated by inspecting the initial
+Coorg BnB reconstruction against its source frames: overlapping/warped surfaces,
+detached fragments and inconsistent camera/depth geometry persist after floor
+leveling. The adopted experiment reconstructs all 161 selected Coorg frames at
+518 resolution in overlapping 36-view sections, then aligns a global Sim(3) graph.
+Only section alignment is in scope; observation fusion remains deferred.
+See the detailed adopted decision in [PLANS.md](PLANS.md).
 
 ## Stage Status
 
@@ -22,6 +24,7 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 | Preprocessing | Verified on supplied captures; conservative repeated-structure filtering, known per-frame blur ambiguity |
 | VGGT inference and point-cloud export | Verified on both captures; interactive qualitative review pending |
 | Floor-plane alignment | Implemented and verified on real outputs; Coorg floor residuals reduced, cross-view drift remains |
+| Coorg high-resolution section alignment | In progress on `fix/recon-section-alignment`; motivated by inspection of initial Coorg outputs |
 | Surface reconstruction, scene understanding and navigation | Planned |
 
 ## Latest Decision
