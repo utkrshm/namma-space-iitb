@@ -21,6 +21,7 @@ packages = ["src"]
 [project.scripts]
 namma-preprocess = "src.preprocessing.cli:main"
 namma-reconstruct = "src.reconstruction.cli:main"
+namma-refine = "src.refinement.cli:main"
 
 [project.optional-dependencies]
 alignment = [
@@ -46,6 +47,9 @@ revisits = [
     "torch>=2.14.1",
     "torchvision>=0.29.1",
     "transformers>=5.20.2",
+]
+refinement = [
+    "kornia>=0.8",
 ]
 
 [tool.pytest.ini_options]
