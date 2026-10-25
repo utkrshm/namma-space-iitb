@@ -351,6 +351,11 @@ the final cloud. Execution results and remaining limitations are in [STATE.md](S
 
 ## Python interface
 
+For the separate per-view refinement implementation, current experimental status,
+commands and session handoff, see [Multi-view refinement](REFINEMENT.md). The first
+Coorg refinement is not accepted: entrance layering persists despite improved
+held-out feature consistency.
+
 ### Reusing a loaded model
 
 Construction is lightweight. `load()` is explicit and idempotent; `predict()` also

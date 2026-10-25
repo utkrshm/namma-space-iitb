@@ -278,6 +278,25 @@ Each point retains source frame index, model-pixel identity, confidence and owne
 section; source timestamps/rotations/image transforms remain in the manifest and
 per-section metadata. The PLY contains XYZ/RGB; its NPZ companion carries provenance.
 
+### Multi-view camera and depth refinement
+
+`src/refinement/` is a separate consumer of joint or section-aligned reconstruction
+artifacts. It builds verified image-feature tracks spanning temporal neighbors and
+image-retrieved revisits, then refines individual camera poses, depth scales and
+optionally smooth spatial depth corrections. Complete tracks are partitioned for
+training, validation and independent testing. Reference cameras/scales fix each
+observed component's gauge; no floor-plane or right-angle-room assumption is imposed.
+
+The handoff retains OpenCV cameras and camera-z depths in the input's arbitrary
+scene units. Corrected depth obeys `z_new = z_initial * exp(log_scale + field(u,v))`;
+world points are unprojected using the corrected camera. Source pixels, RGB,
+confidence, timestamps, transforms and section ownership retain their provenance.
+The root `refine_multiview.py` writes independent `multiview_refinement/` artifacts:
+camera/depth corrections, tracks and splits, validation/test reports, unfused clouds
+and headless inspection images. Same-observation geometry comparisons are separate
+from optional multi-view-supported observation selection. This stage precedes
+surface fusion and does not manufacture unseen surfaces or establish metric scale.
+
 ## 4. Geometric reconstruction
 
 Reconstruction combines the estimated observations into a coherent scene representation. It aligns and fuses points, removes inconsistent observations, estimates surfaces and generates geometry suitable for downstream use. The visual representation and the geometry used for spatial reasoning serve different purposes.
