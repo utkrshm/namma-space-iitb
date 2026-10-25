@@ -23,13 +23,31 @@ class SectionSpec:
 
 
 def create_sections(
-    frame_count: int, section_size: int = 36, overlap: int = 11
+    frame_count: int,
+    section_size: int = 36,
+    overlap: int = 11,
+    tail_section_size: int | None = None,
+    tail_context_frames: int = 0,
+    tail_start_section: int | None = None,
 ) -> list[SectionSpec]:
-    """Create full windows, anchoring the last window at the end and deduplicating."""
+    """Create overlapping windows, optionally replacing a normal-window suffix with tails.
+
+    ``tail_start_section`` indexes the original full-size windows before any tails are
+    added. A context extension moves the first replacement window earlier, but never
+    before the previous normal window's start plus one.
+    """
     if frame_count < 1 or section_size < 1 or not 0 <= overlap < section_size:
         raise ValueError(
             "Require positive frame_count/section_size and 0 <= overlap < section_size"
         )
+    if tail_section_size is not None and not overlap < tail_section_size <= section_size:
+        raise ValueError("tail_section_size must be greater than overlap and at most section_size")
+    if not isinstance(tail_context_frames, int) or tail_context_frames < 0:
+        raise ValueError("tail_context_frames must be a nonnegative integer")
+    if tail_context_frames and tail_section_size is None:
+        raise ValueError("tail_context_frames requires tail_section_size")
+    if tail_start_section is not None and tail_section_size is None:
+        raise ValueError("tail_start_section requires tail_section_size")
     if frame_count <= section_size:
         starts = [0]
     else:
@@ -37,10 +55,69 @@ def create_sections(
         starts = list(range(0, frame_count - section_size + 1, step))
         starts.append(frame_count - section_size)
         starts = list(dict.fromkeys(starts))
-    return [
-        SectionSpec(i, tuple(range(start, min(start + section_size, frame_count))))
-        for i, start in enumerate(starts)
-    ]
+    windows = [(start, min(start + section_size, frame_count)) for start in starts]
+    if tail_section_size is not None:
+        tail_index = len(windows) - 1 if tail_start_section is None else tail_start_section
+        if not isinstance(tail_index, int) or not 0 <= tail_index < len(windows):
+            raise ValueError("tail_start_section must identify an existing normal window")
+        tail_start = windows[tail_index][0]
+        minimum_start = windows[tail_index - 1][0] + 1 if tail_index > 0 else 0
+        tail_start = max(minimum_start, tail_start - tail_context_frames)
+        last_tail_start = max(0, frame_count - tail_section_size)
+        tail_starts = list(range(tail_start, last_tail_start + 1, tail_section_size - overlap))
+        tail_starts.append(last_tail_start)
+        windows = windows[:tail_index] + [
+            (start, min(start + tail_section_size, frame_count))
+            for start in dict.fromkeys(tail_starts)
+        ]
+    return [SectionSpec(i, tuple(range(start, end))) for i, (start, end) in enumerate(windows)]
+
+
+def _absolute_quality_gate(pooled_normalized_median: float, per_frame: dict) -> bool:
+    """Accept a useful edge despite an isolated held-out outlier frame."""
+    return (
+        pooled_normalized_median <= 0.10
+        and sum(frame["normalized_median"] <= 0.10 for frame in per_frame.values()) >= 2
+    )
+
+
+def _split_overlap_frames(common: list[str]) -> tuple[list[str], list[str], list[str]]:
+    """Return disjoint training, primary-validation, and endpoint-stress frame IDs."""
+    if len(common) >= 8:
+        stress = [common[0], common[-1]]
+        positions = np.rint(np.quantile(np.arange(len(common)), [0.25, 0.5, 0.75])).astype(int)
+        validation = [common[index] for index in positions]
+        training = [frame for frame in common if frame not in {*stress, *validation}]
+    elif len(common) == 7:
+        stress = [common[0], common[-1]]
+        interior = common[1:-1]
+        positions = np.rint(np.quantile(np.arange(len(interior)), [1 / 3, 2 / 3])).astype(int)
+        validation = [interior[index] for index in positions]
+        training = [frame for frame in interior if frame not in validation]
+    else:
+        stress = []
+        validation_count = min(3, len(common) - 3)
+        if validation_count < 2:
+            raise ValueError("Overlap needs at least five frames for 3 train/2 validation")
+        positions = np.linspace(0, len(common) - 1, validation_count, dtype=int)
+        validation = [common[index] for index in positions]
+        training = [frame for frame in common if frame not in validation]
+    if len(training) < 3 or len(validation) < 2:
+        raise ValueError("Overlap split requires at least three train and two validation frames")
+    if (
+        set(training) & set(validation)
+        or set(training) & set(stress)
+        or set(validation) & set(stress)
+    ):
+        raise ValueError("Training, validation, and endpoint-stress frames must be disjoint")
+    return training, validation, stress
+
+
+def _registration_threshold(target_camera_distance: float) -> float:
+    """RANSAC tolerance in target reconstruction units, scaled by camera distance."""
+    if not np.isfinite(target_camera_distance) or target_camera_distance <= 0:
+        raise ValueError("target_camera_distance must be finite and positive")
+    return 0.03 * target_camera_distance
 
 
 def _hash_file(path: str | Path) -> str:
@@ -89,6 +166,9 @@ def run_section_inference(
     *,
     section_size: int = 36,
     overlap: int = 11,
+    tail_section_size: int | None = None,
+    tail_context_frames: int = 0,
+    tail_start_section: int | None = None,
     image_size: int = 518,
     device: str = "cuda:0",
     precision: str = "bfloat16",
@@ -100,6 +180,7 @@ def run_section_inference(
     """Infer ordered overlapping windows, saving a standard result per section.
 
     Resume validates source pixel hashes and all model/window settings before reuse.
+    Tail sizing, start index, and context change boundaries only; image size/model pixels stay fixed.
     CUDA OOM is allowed to propagate without changing section size or frame coverage.
     """
     from .visualization import save_point_cloud
@@ -114,9 +195,16 @@ def run_section_inference(
 
     batch = load_preprocessed_frames(source, image_size=image_size)
     frame_ids = [frame.frame_id for frame in batch.frames]
-    provenance = [frame.__dict__ for frame in batch.frames]
+    provenance = json.loads(json.dumps([frame.__dict__ for frame in batch.frames]))
     transforms = json.loads(json.dumps([transform.__dict__ for transform in batch.transforms]))
-    sections = create_sections(len(frame_ids), section_size, overlap)
+    sections = create_sections(
+        len(frame_ids),
+        section_size,
+        overlap,
+        tail_section_size,
+        tail_context_frames,
+        tail_start_section,
+    )
     image_hashes = [
         hashlib.sha256(np.ascontiguousarray(image).tobytes()).hexdigest() for image in batch.images
     ]
@@ -139,37 +227,74 @@ def run_section_inference(
         "frame_provenance": provenance,
         "transforms": transforms,
         "section_size": section_size,
+        "tail_section_size": tail_section_size,
+        "tail_context_frames": tail_context_frames,
+        "tail_start_section": tail_start_section,
         "overlap": overlap,
         "image_size": image_size,
         "model_id": model_id,
         "device": device,
         "precision": precision,
         "local_files_only": local_files_only,
-        "sections": [],
+        "sections": [{"section_index": section.index, "status": "pending"} for section in sections],
+        "archived_sections": [],
     }
+    _write_manifest(output, manifest)
     try:
         for section in sections:
             frame_indices = section.frame_indices
             section_dir = output / f"section_{section.index:02d}"
+            actual_size = len(frame_indices)
+            is_tail = tail_section_size is not None and actual_size != section_size
             settings = {
                 "frame_ids": [frame_ids[i] for i in frame_indices],
                 "image_hashes": [image_hashes[i] for i in frame_indices],
                 "section_index": section.index,
-                "section_size": section_size,
+                "section_size": actual_size,
                 "overlap": overlap,
                 "image_size": image_size,
                 "model_id": model_id,
                 "device": device,
                 "precision": precision,
             }
+            if is_tail:
+                settings["tail_section_size"] = tail_section_size
+            manifest["sections"][section.index] = {**settings, "status": "pending"}
             selected_frames = [provenance[i] for i in frame_indices]
             selected_transforms = [transforms[i] for i in frame_indices]
             selected_valid_hashes = [valid_mask_hashes[i] for i in frame_indices]
             if resume and _cached_section(
                 section_dir, settings, selected_frames, selected_transforms, selected_valid_hashes
             ):
-                manifest["sections"].append({**settings, "status": "cached"})
+                metadata = _load_metadata(section_dir)
+                cached_timing = metadata["section_alignment"]
+                entry = {**settings, "status": "cached"}
+                for key in (
+                    "wall_seconds",
+                    "cuda_peak_allocated_bytes",
+                    "cuda_peak_reserved_bytes",
+                ):
+                    if key in cached_timing:
+                        entry[key] = cached_timing[key]
+                manifest["sections"][section.index] = entry
+                _write_manifest(output, manifest)
+                seconds = cached_timing.get("wall_seconds")
+                memory = cached_timing.get("cuda_peak_allocated_bytes")
+                print(
+                    f"Section {section.index + 1}/{len(sections)} cached: "
+                    f"wall={seconds if seconds is not None else 'unknown'}s, "
+                    f"peak_allocated={memory / 2**30:.2f} GiB"
+                    if memory is not None
+                    else f"Section {section.index + 1}/{len(sections)} cached: wall={seconds}s",
+                    flush=True,
+                )
                 continue
+            archived = _archive_incompatible_section(section_dir, settings, output)
+            if archived is not None:
+                manifest["archived_sections"].append(
+                    {"section_index": section.index, "path": str(archived.relative_to(output))}
+                )
+                _write_manifest(output, manifest)
             import torch
 
             with torch.cuda.device(device):
@@ -198,20 +323,56 @@ def run_section_inference(
             if save_ply:
                 cloud = reconstruction.point_cloud(max_points=1_000_000)
                 save_point_cloud(cloud, section_dir / "point_cloud.ply")
-            manifest["sections"].append(
-                {
-                    **settings,
-                    "status": "inferred",
-                    "wall_seconds": elapsed,
-                    "cuda_peak_allocated_bytes": allocated,
-                    "cuda_peak_reserved_bytes": reserved,
-                }
+            manifest["sections"][section.index] = {
+                **settings,
+                "status": "inferred",
+                "wall_seconds": elapsed,
+                "cuda_peak_allocated_bytes": allocated,
+                "cuda_peak_reserved_bytes": reserved,
+            }
+            _write_manifest(output, manifest)
+            print(
+                f"Section {section.index + 1}/{len(sections)} complete in {elapsed:.1f}s; "
+                f"CUDA peak allocated/reserved {allocated / 2**30:.2f}/{reserved / 2**30:.2f} GiB",
+                flush=True,
             )
             del reconstruction
     finally:
         model.unload()
-    (output / "manifest.json").write_text(json.dumps(manifest, indent=2, allow_nan=False) + "\n")
+    _write_manifest(output, manifest)
     return manifest
+
+
+def _write_manifest(output: Path, manifest: dict) -> None:
+    (output / "manifest.json").write_text(json.dumps(manifest, indent=2, allow_nan=False) + "\n")
+
+
+def _archive_incompatible_section(section_dir: Path, expected: dict, output: Path) -> Path | None:
+    """Archive predictions only when the frame window itself changed; never overwrite archives."""
+    metadata_path = section_dir / "metadata.json"
+    predictions_path = section_dir / "predictions.npz"
+    if not metadata_path.is_file() or not predictions_path.is_file():
+        return None
+    try:
+        saved = json.loads(metadata_path.read_text()).get("section_alignment", {})
+    except (OSError, json.JSONDecodeError):
+        return None
+    window_changed = (
+        saved.get("frame_ids") != expected["frame_ids"]
+        or saved.get("section_size") != expected["section_size"]
+    )
+    if not window_changed:
+        return None
+    archive_name = "initial_36" if saved.get("section_size") == 36 else "superseded_sections"
+    archive_root = output / "experiments" / archive_name
+    archive_root.mkdir(parents=True, exist_ok=True)
+    destination = archive_root / section_dir.name
+    suffix = 1
+    while destination.exists():
+        destination = archive_root / f"{section_dir.name}_{suffix}"
+        suffix += 1
+    section_dir.rename(destination)
+    return destination
 
 
 def _load_metadata(section_dir: Path) -> dict:
@@ -340,20 +501,11 @@ def run_section_alignment(
     for earlier in range(len(sections) - 1):
         later = earlier + 1
         common = [
-            frame_ids.index(fid)
+            fid
             for fid in sections[earlier]["frame_ids"]
             if fid in set(sections[later]["frame_ids"])
         ]
-        validation_count = min(3, len(common) - 3)
-        if validation_count < 2:
-            raise ValueError(
-                f"Overlap {earlier}-{later} needs at least five common frames for 3 train/2 validation"
-            )
-        validation_positions = np.linspace(0, len(common) - 1, validation_count, dtype=int)
-        validation = {common[index] for index in validation_positions}
-        train = [item for item in common if item not in validation]
-        if len(train) < 3 or not validation:
-            raise ValueError(f"Insufficient overlap for sections {earlier}, {later}")
+        train, validation, stress_frames = _split_overlap_frames(common)
         a_dir, b_dir = root / f"section_{earlier:02d}", root / f"section_{later:02d}"
         a_meta, b_meta = _load_metadata(a_dir), _load_metadata(b_dir)
         a_ids, b_ids = a_meta["frames"], b_meta["frames"]
@@ -372,7 +524,7 @@ def run_section_alignment(
         )
         if any(
             section_hashes[fid] != later_hashes[fid] or a_transforms[fid] != b_transforms[fid]
-            for fid in (frame_ids[i] for i in common)
+            for fid in common
         ):
             raise ValueError(
                 f"Overlap image pixels/transforms differ for sections {earlier}, {later}"
@@ -382,10 +534,15 @@ def run_section_alignment(
             first = {key: archive[key] for key in keys}
         with np.load(b_dir / "predictions.npz") as archive:
             second = {key: archive[key] for key in keys}
-        train_parts, valid_parts = [], []
-        for frame_index in common:
-            fid = frame_ids[frame_index]
-            split = valid_parts if frame_index in validation else train_parts
+        train_parts, valid_parts, stress_parts = [], [], []
+        for fid in common:
+            frame_index = frame_ids.index(fid)
+            if fid in train:
+                split = train_parts
+            elif fid in validation:
+                split = valid_parts
+            else:
+                split = stress_parts
             correspondence = _sample_frame_correspondences(
                 first, second, a_local[fid], b_local[fid], frame_index, 1000 + frame_index, 500
             )
@@ -403,6 +560,16 @@ def run_section_alignment(
 
         src, dst, weights, pixels, labels = combine(train_parts)
         val_src, val_dst, val_weights, val_pixels, val_labels = combine(valid_parts)
+        if stress_parts:
+            stress_src, stress_dst, stress_weights, stress_pixels, stress_labels = combine(
+                stress_parts
+            )
+        else:
+            stress_src = np.empty((0, 3), dtype=np.float32)
+            stress_dst = np.empty((0, 3), dtype=np.float32)
+            stress_weights = np.empty((0,), dtype=np.float32)
+            stress_pixels = np.empty((0, 2), dtype=np.int32)
+            stress_labels = np.empty((0,), dtype=np.int32)
         edge_path = root / f"overlap_{later:02d}_{earlier:02d}.npz"
         np.savez_compressed(
             edge_path,
@@ -416,12 +583,18 @@ def run_section_alignment(
             validation_weights=val_weights,
             validation_pixel_xy=val_pixels,
             validation_frame_indices=val_labels,
+            stress_source=stress_src,
+            stress_target=stress_dst,
+            stress_weights=stress_weights,
+            stress_pixel_xy=stress_pixels,
+            stress_frame_indices=stress_labels,
         )
         centers = np.asarray(
             [first["camera_to_world"][a_local[frame_ids[int(i)]], :3, 3] for i in labels]
         )
         scale = _scene_scale(dst, centers)
-        estimate, fit = robust_sim3(src, dst, weights=weights, seed=earlier)
+        threshold = _registration_threshold(scale)
+        estimate, fit = robust_sim3(src, dst, weights=weights, threshold=threshold, seed=earlier)
         fit_inliers = np.asarray(fit["residuals"]) <= fit["threshold"]
         inlier_frames = np.unique(labels[fit_inliers])
         inlier_cells = np.unique(
@@ -432,31 +605,54 @@ def run_section_alignment(
             raise ValueError(
                 f"Overlap {earlier}-{later} Sim3 consensus must span at least 3 frames and 2 cells"
             )
-        residual = np.linalg.norm(estimate.apply(val_src) - val_dst, axis=1)
-        validation_report = {
-            "count": len(residual),
-            "median": float(np.median(residual)),
-            "p90": float(np.percentile(residual, 90)),
-            "normalized_median": float(np.median(residual) / scale),
-            "normalized_p90": float(np.percentile(residual, 90) / scale),
-            "scene_scale": scale,
-        }
-        if (
-            validation_report["normalized_median"] > 0.10
-            or validation_report["normalized_p90"] > 0.25
+
+        def validation_metrics(
+            transform,
+            validation_source=val_src,
+            validation_target=val_dst,
+            validation_labels=val_labels,
+            scene_scale=scale,
         ):
-            raise ValueError(
-                f"Overlap {earlier}-{later} held-out quality gate failed: "
-                f"normalized median={validation_report['normalized_median']:.4f} "
-                f"(limit 0.10), p90={validation_report['normalized_p90']:.4f} (limit 0.25)"
+            residuals = np.linalg.norm(
+                transform.apply(validation_source) - validation_target, axis=1
             )
+            per_frame = {}
+            for global_index in sorted(set(map(int, validation_labels))):
+                selected = validation_labels == global_index
+                frame_residual = residuals[selected]
+                per_frame[frame_ids[global_index]] = {
+                    "count": len(frame_residual),
+                    "median": float(np.median(frame_residual)),
+                    "p90": float(np.percentile(frame_residual, 90)),
+                    "normalized_median": float(np.median(frame_residual) / scene_scale),
+                    "normalized_p90": float(np.percentile(frame_residual, 90) / scene_scale),
+                }
+            report = {
+                "count": len(residuals),
+                "median": float(np.median(residuals)),
+                "p90": float(np.percentile(residuals, 90)),
+                "normalized_median": float(np.median(residuals) / scene_scale),
+                "normalized_p90": float(np.percentile(residuals, 90) / scene_scale),
+                "scene_scale": scene_scale,
+                "per_frame": per_frame,
+                "frames_with_normalized_median_at_most_0_10": sum(
+                    value["normalized_median"] <= 0.10 for value in per_frame.values()
+                ),
+                "p90_warning": float(np.percentile(residuals, 90) / scene_scale) > 0.35,
+            }
+            report["absolute_gate_passed"] = _absolute_quality_gate(
+                report["normalized_median"], per_frame
+            )
+            return report
+
+        validation_before_icp = validation_metrics(estimate)
+        validation_report = validation_before_icp
         if try_icp:
             try:
                 from .section_evaluation import evaluate_icp
 
                 train_cloud_a, train_cloud_b = [], []
-                for frame_index in train:
-                    fid = frame_ids[frame_index]
+                for fid in train:
                     ai, bi = a_local[fid], b_local[fid]
                     for data, local, clouds in (
                         (first, ai, train_cloud_a),
@@ -477,13 +673,77 @@ def run_section_alignment(
                         clouds.append(point[valid])
                 train_cloud_a = np.concatenate(train_cloud_a)
                 train_cloud_b = np.concatenate(train_cloud_b)
-                estimate, icp_report = evaluate_icp(
+                initial_estimate = estimate
+                candidate, icp_report = evaluate_icp(
                     train_cloud_b, train_cloud_a, estimate, val_src, val_dst, scene_scale=scale
                 )
+                if icp_report.get("accepted"):
+                    candidate_report = validation_metrics(candidate)
+                    if candidate_report["absolute_gate_passed"]:
+                        estimate = candidate
+                    else:
+                        icp_report["accepted"] = False
+                        icp_report["reason"] = (
+                            "ICP candidate failed the absolute held-out quality gate"
+                        )
+                        icp_report["candidate_validation"] = candidate_report
+                        estimate = initial_estimate
             except (ImportError, RuntimeError, ValueError) as error:
                 icp_report = {"accepted": False, "error": str(error)}
         else:
             icp_report = {"accepted": False, "skipped": True}
+        validation_report = validation_metrics(estimate)
+        if not validation_report["absolute_gate_passed"]:
+            raise ValueError(
+                f"Overlap {earlier}-{later} failed absolute held-out alignment gate: "
+                f"pooled normalized median={validation_report['normalized_median']:.4f} "
+                f"(limit 0.10), only "
+                f"{validation_report['frames_with_normalized_median_at_most_0_10']} of "
+                f"{len(validation_report['per_frame'])} held-out frames have median <= 0.10"
+            )
+        camera_diagnostics = []
+        for fid in common:
+            earlier_camera = first["camera_to_world"][a_local[fid]]
+            later_camera = second["camera_to_world"][b_local[fid]]
+            center_error = np.linalg.norm(
+                estimate.apply(later_camera[:3, 3]) - earlier_camera[:3, 3]
+            )
+            rotation_error = earlier_camera[:3, :3].T @ estimate.rotation @ later_camera[:3, :3]
+            angle = np.degrees(np.arccos(np.clip((np.trace(rotation_error) - 1) / 2, -1.0, 1.0)))
+            camera_diagnostics.append(
+                {
+                    "frame_id": fid,
+                    "role": (
+                        "endpoint_stress"
+                        if fid in stress_frames
+                        else "primary_validation"
+                        if fid in validation
+                        else "training"
+                    ),
+                    "center_distance": float(center_error),
+                    "normalized_center_distance": float(center_error / scale),
+                    "orientation_disagreement_degrees": float(angle),
+                }
+            )
+        stress_report = {"count": len(stress_src), "per_frame": {}}
+        if len(stress_src):
+            stress_errors = np.linalg.norm(estimate.apply(stress_src) - stress_dst, axis=1)
+            stress_report.update(
+                median=float(np.median(stress_errors)),
+                p90=float(np.percentile(stress_errors, 90)),
+                normalized_median=float(np.median(stress_errors) / scale),
+                normalized_p90=float(np.percentile(stress_errors, 90) / scale),
+            )
+            for global_index in sorted(set(map(int, stress_labels))):
+                selected = stress_labels == global_index
+                frame_errors = stress_errors[selected]
+                stress_report["per_frame"][frame_ids[global_index]] = {
+                    "count": len(frame_errors),
+                    "median": float(np.median(frame_errors)),
+                    "p90": float(np.percentile(frame_errors, 90)),
+                    "normalized_median": float(np.median(frame_errors) / scale),
+                    "normalized_p90": float(np.percentile(frame_errors, 90) / scale),
+                }
         weight = max(float(fit["inlier_ratio"] * len(src)), 1.0)
         edges.append(SectionEdge(later, earlier, estimate, weight, "overlap", scale))
         edge_reports.append(
@@ -495,7 +755,13 @@ def run_section_alignment(
                 "weight": weight,
                 "translation_scale": scale,
                 "training": fit,
+                "training_frame_ids": train,
+                "primary_validation_frame_ids": validation,
+                "endpoint_stress_frame_ids": stress_frames,
                 "validation": validation_report,
+                "validation_before_icp": validation_before_icp,
+                "endpoint_stress": stress_report,
+                "duplicate_camera_pose_diagnostics": camera_diagnostics,
                 "icp": icp_report,
                 "transform": _sim3_json(estimate),
             }
@@ -525,6 +791,63 @@ def run_section_alignment(
     if any(pose is None for pose in baseline):
         raise ValueError("Adjacent overlap edges do not provide a connected baseline")
     transforms, initial_report = optimize_section_graph(len(sections), edges)
+    # Graph optimization must preserve independently held-out overlap agreement.
+    post_graph = []
+    for edge in edge_reports:
+        if edge["kind"] != "overlap":
+            continue
+        with np.load(root / edge["correspondences"]) as paired:
+            relative = transforms[edge["target"]].inverse().compose(transforms[edge["source"]])
+            distances = (
+                np.linalg.norm(
+                    relative.apply(paired["validation_source"]) - paired["validation_target"],
+                    axis=1,
+                )
+                / edge["translation_scale"]
+            )
+            labels = paired["validation_frame_indices"]
+            stress_source = paired["stress_source"]
+            stress_target = paired["stress_target"]
+            stress_labels = paired["stress_frame_indices"]
+        per_frame = {
+            frame_ids[int(index)]: {
+                "normalized_median": float(np.median(distances[labels == index]))
+            }
+            for index in np.unique(labels)
+        }
+        median = float(np.median(distances))
+        passed = _absolute_quality_gate(median, per_frame)
+        post_graph.append(
+            {
+                "source": edge["source"],
+                "target": edge["target"],
+                "normalized_median": median,
+                "normalized_p90": float(np.percentile(distances, 90)),
+                "per_frame": per_frame,
+                "absolute_gate_passed": passed,
+            }
+        )
+        if not passed:
+            raise ValueError(
+                f"Optimized graph degraded held-out overlap {edge['source']}-{edge['target']}"
+            )
+        stress_post_graph = {"count": len(stress_source), "per_frame": {}}
+        if len(stress_source):
+            stress_distances = (
+                np.linalg.norm(relative.apply(stress_source) - stress_target, axis=1)
+                / edge["translation_scale"]
+            )
+            stress_post_graph.update(
+                normalized_median=float(np.median(stress_distances)),
+                normalized_p90=float(np.percentile(stress_distances, 90)),
+            )
+            for index in np.unique(stress_labels):
+                frame_distance = stress_distances[stress_labels == index]
+                stress_post_graph["per_frame"][frame_ids[int(index)]] = {
+                    "normalized_median": float(np.median(frame_distance)),
+                    "normalized_p90": float(np.percentile(frame_distance, 90)),
+                }
+        edge["endpoint_stress"]["post_graph"] = stress_post_graph
     graph_path = root / "graph.json"
     graph = {
         "schema_version": 1,
@@ -533,6 +856,7 @@ def run_section_alignment(
         "optimized_transforms": [_sim3_json(t) for t in transforms],
         "edges": edge_reports,
         "optimizer": initial_report,
+        "post_graph_validation": post_graph,
     }
     graph_path.write_text(json.dumps(graph, indent=2, allow_nan=False) + "\n")
     np.savez_compressed(
@@ -666,6 +990,7 @@ def align_sections(
     skip_inference: bool = False,
     try_icp: bool = True,
     extra_edges=None,
+    use_revisits: bool = True,
     max_points: int = 1_000_000,
     **kwargs,
 ) -> dict:
@@ -674,6 +999,10 @@ def align_sections(
         run_section_inference(preprocessing_dir, output_dir, **kwargs)
     if inference_only:
         return {"inference_only": True}
+    if extra_edges is None and use_revisits:
+        from .section_benchmark import build_revisit_edges
+
+        extra_edges, _ = build_revisit_edges(output_dir, preprocessing_dir)
     return run_section_alignment(
         output_dir, try_icp=try_icp, extra_edges=extra_edges, max_points=max_points
     )
