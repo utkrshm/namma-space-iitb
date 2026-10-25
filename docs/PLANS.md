@@ -14,6 +14,15 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 25-10-26 18:53:36 IST — Failed COLMAP reconstruction experiment on the M Block room
+
+- **Status:** Failed experiment; further work in this direction discontinued.
+- **Plan tried:** Evaluate COLMAP-based reconstruction as an alternative to VGGT, using real CPU SIFT extraction, exhaustive feature matching and incremental sparse Structure-from-Motion through `pycolmap`. Implementation and tests were carried out on the separate `feat/colmap-reconstruction` branch; this entry records the outcome on the current `fix/recon-section-alignment` branch.
+- **Evaluation:** Tested on `videos/room_m_block.mp4` (the M Block room), using its existing 36 geometry keyframes with shared per-clip `SIMPLE_RADIAL` intrinsics, a 1600-pixel maximum feature-extraction image size, an 8192-feature setting and four CPU threads. The completed run took 259.761 seconds and registered 27/36 distinct images across three overlapping, independently framed submodels. Their image/point counts were 2/479, 21/7,329 and 26/11,970; mean reprojection errors were approximately 0.345, 0.992 and 0.696 pixels respectively. Submodel coverage overlaps and must not be summed.
+- **Qualitative findings:** Personally inspected multiple orthogonal and perspective views of every submodel, compared them with chronological source frames, and rendered the largest exported PLY directly in Open3D. The largest model recovered recognizable bedding colors, bed-frame edges and furniture fragments, but most geometry remained thin, disconnected patches. Blank walls and broad floor regions had large holes, some structures were stretched or poorly aligned, and camera positions clustered tightly relative to the reconstructed scene extent. The smaller 21-image model was less coherent; the two-image model was an almost planar patch rather than a room. Nine keyframes remained unregistered, and the low reprojection errors did not establish convincing room shape or metric accuracy.
+- **Decision and rationale:** The constructed point cloud was not convincing enough to warrant further work in this direction. Discontinue this COLMAP-based sparse reconstruction approach for the project based on the incomplete, geometrically unreliable M Block room result. This experiment did not evaluate dense stereo or meshing.
+- **Evidence retained:** Native sparse models, colored `model_0.ply` / `model_1.ply` / `model_2.ply`, `report.json` and inspection screenshots remain under `outputs/room_m_block/colmap_geometry/`. The separate COLMAP branch retains its implementation and evaluation documentation.
+
 ## 25-10-26 14:12:41 IST — Depth-scaled fitting and independent interior handoff validation
 
 - **Status:** Adopted after real overlap investigations; supersedes the tail configuration and endpoint-based primary validation in the preceding execution entry.
