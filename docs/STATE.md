@@ -2,7 +2,7 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `26-10-26 10:23:01 IST`
+**Last updated:** `26-10-26 11:20:28 IST`
 
 ## Current Focus
 
@@ -125,6 +125,13 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 - `uv run --no-sync ruff check view_point_cloud.py`,
   `uv run --no-sync ruff format --check view_point_cloud.py`, `uv lock --check`
   and `git diff --check`: passed.
+
+### Camera-traversal viewer (26-10-26 11:20:28 IST)
+
+- Added `--follow-cameras` to `view_point_cloud.py` to play saved clouds along
+  VGGT, section-aligned or refined camera poses at 3 fps. Camera artifacts are
+  auto-discovered beside the cloud or can be passed explicitly. Focused tests pass
+  (**6 passed**); interactive playback remains for the user to confirm.
 
 ### Reconstruction interface (initial verification, 21-10-26 12:08:13 IST)
 
