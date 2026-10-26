@@ -21,6 +21,7 @@ packages = ["src"]
 [project.scripts]
 namma-preprocess = "src.preprocessing.cli:main"
 namma-reconstruct = "src.reconstruction.cli:main"
+namma-loop-closure = "src.loop_closure.cli:main"
 
 [project.optional-dependencies]
 alignment = [

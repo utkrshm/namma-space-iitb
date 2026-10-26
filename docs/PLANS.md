@@ -14,6 +14,64 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 26-10-26 19:11:38 IST — Loop closure for global camera drift (two compared methods)
+
+- **Status:** Adopted for implementation on `feat/LoopClosure` (based on `fix/recon-section-alignment`).
+- **Evidence motivating the change:** Camera-relative and top-down slices of the actual
+  `section_alignment/point_cloud.ply` (Coorg) colored by source time show that the late
+  dining sections (≈180–215 s) are rotated by roughly 30° relative to the living room and
+  pass through the TV wall. Plain walls appear twice (≈170 s vs ≈200 s copies), and the
+  wood pillar appears in three to four places. The four preprocessing revisits connect only
+  entrance/luggage views, so nothing constrains the end of the capture. The video does
+  look back from the dining area into the living room (≈207–211 s), and from the living
+  room into the dining area (≈88–113 s).
+- **Decision:** Add a separate `src/loop_closure/` stage that reads the cached section
+  predictions **read-only** and writes only to a new output directory. It shares one
+  loop-detection step and offers two methods for comparison:
+  - **A — VGGT-Long-style loop chunks.** Retrieve far-apart frame pairs with DINOv2 and
+    verify them with ALIKED/LightGlue. Jointly infer a new VGGT "loop chunk" built from
+    the frames around both ends. Register the chunk to each owner section using exact
+    shared pixels (the same contract as adjacent overlaps), then derive a section-to-section
+    Sim(3) loop edge. Add it to the existing global section graph. Held-out whole frames
+    and cross-side feature agreement inside the chunk gate every loop edge. This follows
+    the algorithm of the vendored `deps/VGGT-Long` (chunk → loop chunk → Sim(3) graph),
+    but stays inside our VGGT wrapper, preprocessing contract and validation gates. It
+    avoids VGGT-Long's separate image-directory pipeline and its extra dependencies
+    (faiss, numba, pytorch-lightning, SALAD weights).
+  - **B — Bundle adjustment.** Start from a section-graph export (baseline or A).
+    Refine one camera pose and one depth scale per frame, plus 3D track points, using
+    ALIKED/LightGlue tracks over sequential neighbours and verified loop pairs.
+    Reprojection residuals are robust (Huber), and a weak log-depth prior ties each track
+    to its VGGT depth. This prior fixes scale and keeps dense depth exportable. Intrinsics
+    stay at the owner-section VGGT values. Some loop pairs are held out of the solve
+    entirely for evaluation.
+- **Rationale and trade-offs:** One Sim(3) per section cannot remove drift *inside* a
+  section, so A alone may leave bends; B can bend every frame but depends on sparse
+  feature coverage (weak on blank walls). Comparing both on identical held-out evidence
+  shows which actually closes the loop. Neither method fuses observations, edits source
+  inputs, or overwrites `section_alignment/`.
+- **Affected components:** new `src/loop_closure/` package (contracts, detection, loop
+  chunks, graph export, bundle adjustment, evaluation, CLI), a keyword-only `export_dir` /
+  `strict_post_graph` option on `run_section_alignment` (defaults unchanged), root
+  script `close_loops.py`, `[project.scripts] namma-loop-closure`, `tests/loop_closure/`,
+  `docs/LOOP_CLOSURE.md`, `docs/ARCHITECTURE.md`, `docs/STATE.md`, `README.md`.
+- **Completion criteria:** Real Coorg run of both methods. The same held-out loop-pair
+  feature correspondences are evaluated for baseline, A and B (normalized 3D disagreement),
+  along with adjacent-pair consistency and top-down/camera-slice renders of the actual
+  exported clouds. The adopted method is recorded with its failures; no gate is loosened
+  to make a result pass.
+- **Amendments during execution (`26-10-26 20:25:16 IST`):** (1) the retrieval threshold
+  dropped to 0.40/top-8, because at 0.70 the repeated entrance grilles monopolised
+  candidates. (2) A non-planar override admits repetition-flagged pairs whose epipolar
+  inliers are not explained by one or two homographies; this was measured on real true
+  and false pairs before adoption. (3) Bundle adjustment uses explicit parameter scales
+  plus a 30 px initial gate; with Jacobian-based scaling the cameras did not move.
+  (4) An optional square-walls arm (M) was added to test the ≈30° dining yaw. It had no
+  effect because image evidence supports the 162 s turn.
+- **Completed:** B (from baseline) is adopted as the camera solution. A and M are retained
+  as compared, documented arms. Results and limitations are in
+  [LOOP_CLOSURE.md](LOOP_CLOSURE.md) and [STATE.md](STATE.md).
+
 ## 25-10-26 18:53:36 IST — Failed COLMAP reconstruction experiment on the M Block room
 
 - **Status:** Failed experiment; further work in this direction discontinued.

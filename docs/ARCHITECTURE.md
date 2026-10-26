@@ -278,6 +278,29 @@ Each point retains source frame index, model-pixel identity, confidence and owne
 section; source timestamps/rotations/image transforms remain in the manifest and
 per-section metadata. The PLY contains XYZ/RGB; its NPZ companion carries provenance.
 
+### Loop closure (`src/loop_closure/`)
+
+The loop-closure stage reads a finished `section_alignment/` directory **read-only** and
+writes to a separate directory (default `outputs/<capture>/loop_closure/`). It shares
+one loop detection step: DINOv2 retrieval of frame pairs more than 20 s apart, verified
+with ALIKED/LightGlue on the shared 518-pixel model grid. Each verified pair is
+assigned a role: a method-A chunk centre, a training pair, or a held-out pair that no
+method uses.
+
+- **Method A (VGGT-Long-style loop chunks):** VGGT jointly infers the frames around both
+  ends of a loop. The chunk is registered to each owner section on exact shared pixels,
+  and the composed Sim(3) becomes a `loop_chunk` edge in the existing section graph.
+  Held-out frames and the loop pair's own feature matches gate each edge.
+- **Method B (bundle adjustment):** per-frame pose and log depth-scale increments plus
+  track points minimize robust reprojection error, with a log-depth prior to VGGT depth.
+  It starts from the baseline graph and, if A ran, from A as well.
+
+Every method exports `cameras.npz` (`frame_ids`, `owners`, `camera_to_world` 4×4,
+`depth_scale`, model-grid `intrinsics`) and a `point_cloud.npz|ply` in the section-export
+schema. A frame's points are `camera_to_world · (depth_scale · owner depth)`. All methods
+are compared on identical correspondences in `comparison.json`. See
+[LOOP_CLOSURE.md](LOOP_CLOSURE.md).
+
 ## 4. Geometric reconstruction
 
 Reconstruction combines the estimated observations into a coherent scene representation. It aligns and fuses points, removes inconsistent observations, estimates surfaces and generates geometry suitable for downstream use. The visual representation and the geometry used for spatial reasoning serve different purposes.

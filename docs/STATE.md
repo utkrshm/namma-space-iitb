@@ -2,11 +2,16 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `25-10-26 14:23:56 IST`
+**Last updated:** `26-10-26 20:25:16 IST`
 
 ## Current Focus
 
-Work is on `fix/recon-section-alignment`, motivated by inspecting the initial
+Work is on `feat/LoopClosure` (from `fix/recon-section-alignment`): loop closure for the
+global camera drift seen in the Coorg section-aligned cloud. Two methods are compared,
+VGGT-Long-style loop chunks (A) and bundle adjustment (B), plus an optional square-walls
+arm (M). See [LOOP_CLOSURE.md](LOOP_CLOSURE.md).
+
+Previous focus (`fix/recon-section-alignment`) was motivated by inspecting the initial
 Coorg BnB reconstruction against its source frames: overlapping/warped surfaces,
 detached fragments and inconsistent camera/depth geometry persist after floor
 leveling. All 161 selected Coorg frames now have a 518-resolution section-aligned
@@ -28,15 +33,48 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 | VGGT inference and point-cloud export | Verified on both captures; Coorg original/section clouds also reviewed headlessly |
 | Floor-plane alignment | Implemented and verified on real outputs; Coorg floor residuals reduced, cross-view drift remains |
 | Coorg high-resolution section alignment | Verified on real Coorg outputs: connected global graph, all seven primary handoffs pass, improved consistency and visual structure; residual distortion remains |
+| Loop closure (`src/loop_closure/`) | Implemented and run on real Coorg outputs; B gives a measurable gain (sequential −35%, held-out loops −10%); dining-wing drift and wall layering remain (no verifiable dining loop in this capture) |
 | Surface reconstruction, scene understanding and navigation | Planned |
 
 ## Latest Decision
+
+- **Timestamp:** `26-10-26 19:11:38 IST`
+- **Decision:** Add a separate read-only loop-closure stage and compare VGGT loop chunks (A) with bundle adjustment (B) on identical held-out correspondences.
+- **Reference:** “Loop closure for global camera drift (two compared methods)” in [PLANS.md](PLANS.md).
+
+### Previous decision
 
 - **Timestamp:** `25-10-26 14:12:41 IST`
 - **Decision:** Use depth-scaled robust section registration with independent interior handoff validation, explicit endpoint stress reporting, verified revisit constraints and a global Sim(3) solve. Keep the first four 36-view sections and use four 24-view tail sections. Reject ICP corrections that do not improve held-out agreement.
 - **Reference:** “Depth-scaled fitting and independent interior handoff validation” in [PLANS.md](PLANS.md).
 
 ## Current Progress
+
+### Loop closure on Coorg (`feat/LoopClosure`)
+
+- **Recorded `26-10-26 20:25:16 IST`:** `close_loops.py outputs/coorg_bnb/section_alignment
+  --output-dir outputs/coorg_bnb/loop_closure` ran all arms on the A4000. The section
+  directory was read-only; every artifact is under `outputs/coorg_bnb/loop_closure/`.
+- 494 DINOv2 candidates, 24 verified loops (5 chunk centres / 13 train / 6 held out).
+  The repeated-structure guard rejected every true wide-baseline living-room loop, so a
+  non-planar override was added. Measured planar fraction was 0.30–0.38 for true loops
+  and 0.79–0.98 for grille/inlay false positives. Match images were inspected.
+- No verifiable dining→living loop exists. An exhaustive scan of 178–214 s against
+  77–146 s found 0 epipolar inliers, and LoFTR indoor found no matches.
+- Method A accepted 3/5 loop edges (0↔2, 2↔3, 2↔4); all adjacent held-out checks still
+  pass after optimization. B from baseline: inlier reprojection 2.53→1.07 px.
+  Normalized held-out loop disagreement 0.0458→0.0413; sequential 0.0166→0.0107.
+  A alone and M did not improve the held-out metrics. Full table in
+  [LOOP_CLOSURE.md](LOOP_CLOSURE.md#coorg-results-26-10-26-2025-ist-a4000).
+- Square-walls diagnosis: frames 0–160 s lie within ±10° of the house axes, while
+  frames from 162 s sit at +31–35°. The 160.2→162.2 s transition has 407 feature
+  matches, so the turn is image-supported, and the prior does not override it.
+- Actual-PLY inspection (`inspection/topdown_comparison.png`, seven camera slices):
+  the arms are visually almost identical. The doubled 171 s wall, the dining geometry
+  crossing the TV wall and the 158 s pillar layers persist.
+- Checks: `uv run --no-sync pytest tests/reconstruction tests/loop_closure -q`
+  **60 passed**. Ruff check/format and `uv lock --check` pass. Real VGGT, DINOv2 and
+  ALIKED/LightGlue inference ran. No GUI viewer was opened.
 
 ### Coorg section alignment after inspection of the initial outputs
 
@@ -289,6 +327,13 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 | Coorg | Resumed, unchanged | 182.19 s | 240.26 s |
 
 ## Blockers
+
+- Coorg's dining wing (≈162–215 s) has no image-verifiable loop to earlier rooms, so its
+  ≈30° yaw offset and the resulting TV-wall interpenetration cannot be closed from this
+  capture. A recapture that walks back from the dining room into the living room is needed,
+  or the user can confirm whether that wing is genuinely angled.
+- Remaining wall layering is partly per-frame VGGT depth error on plain walls and
+  reflective/translucent regions; camera-only optimization cannot remove it.
 
 - Coorg's initial section-alignment benchmark is met, but residual within-section
   warping, endpoint pose/depth outliers and conflicting revisit measurements remain.

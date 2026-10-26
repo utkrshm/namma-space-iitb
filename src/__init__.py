@@ -1,5 +1,6 @@
 """Namma Space pipeline stages."""
 
+from .loop_closure import LoopConfig, run_loop_closure
 from .preprocessing import PreprocessConfig, PreprocessResult, load_result, preprocess_capture
 from .reconstruction import (
     CameraParameters,
@@ -43,6 +44,7 @@ __all__ = [
     "FrameProvenance",
     "ImageBatch",
     "ImageTransform",
+    "LoopConfig",
     "PointCloud",
     "PreprocessConfig",
     "PreprocessResult",
@@ -67,6 +69,7 @@ __all__ = [
     "preprocess_capture",
     "reconstruct_preprocessed",
     "robust_sim3",
+    "run_loop_closure",
     "run_section_alignment",
     "run_section_inference",
     "save_point_cloud",

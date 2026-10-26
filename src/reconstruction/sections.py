@@ -474,12 +474,21 @@ def run_section_alignment(
     try_icp: bool = True,
     extra_edges=None,
     max_points: int = 1_000_000,
+    export_dir: str | Path | None = None,
+    strict_post_graph: bool = True,
 ) -> dict:
-    """Align cached sections, export one owner prediction per source frame, and report diagnostics."""
+    """Align cached sections, export one owner prediction per source frame, and report diagnostics.
+
+    Section predictions are read from ``output_dir``. ``export_dir`` (default: the same
+    directory) receives every written artifact, so a read-only section cache can be reused.
+    With ``strict_post_graph=False`` a degraded held-out overlap is recorded, not raised.
+    """
     from .section_registration import SectionEdge, optimize_section_graph, robust_sim3
     from .visualization import save_point_cloud
 
     root = Path(output_dir).resolve()
+    out = root if export_dir is None else Path(export_dir).resolve()
+    out.mkdir(parents=True, exist_ok=True)
     manifest = json.loads((root / "manifest.json").read_text())
     frame_ids = manifest["frame_ids"]
     sections = manifest["sections"]
@@ -570,7 +579,7 @@ def run_section_alignment(
             stress_weights = np.empty((0,), dtype=np.float32)
             stress_pixels = np.empty((0, 2), dtype=np.int32)
             stress_labels = np.empty((0,), dtype=np.int32)
-        edge_path = root / f"overlap_{later:02d}_{earlier:02d}.npz"
+        edge_path = out / f"overlap_{later:02d}_{earlier:02d}.npz"
         np.savez_compressed(
             edge_path,
             train_source=src,
@@ -796,7 +805,7 @@ def run_section_alignment(
     for edge in edge_reports:
         if edge["kind"] != "overlap":
             continue
-        with np.load(root / edge["correspondences"]) as paired:
+        with np.load(out / edge["correspondences"]) as paired:
             relative = transforms[edge["target"]].inverse().compose(transforms[edge["source"]])
             distances = (
                 np.linalg.norm(
@@ -827,7 +836,7 @@ def run_section_alignment(
                 "absolute_gate_passed": passed,
             }
         )
-        if not passed:
+        if not passed and strict_post_graph:
             raise ValueError(
                 f"Optimized graph degraded held-out overlap {edge['source']}-{edge['target']}"
             )
@@ -848,7 +857,7 @@ def run_section_alignment(
                     "normalized_p90": float(np.percentile(frame_distance, 90)),
                 }
         edge["endpoint_stress"]["post_graph"] = stress_post_graph
-    graph_path = root / "graph.json"
+    graph_path = out / "graph.json"
     graph = {
         "schema_version": 1,
         "convention": "section-local -> global; world points map as s*R*p+t",
@@ -860,7 +869,7 @@ def run_section_alignment(
     }
     graph_path.write_text(json.dumps(graph, indent=2, allow_nan=False) + "\n")
     np.savez_compressed(
-        root / "graph.npz",
+        out / "graph.npz",
         initial_matrices=np.stack([t.as_matrix() for t in baseline]),
         optimized_matrices=np.stack([t.as_matrix() for t in transforms]),
     )
@@ -955,7 +964,7 @@ def run_section_alignment(
         "depths": cloud_depths,
         "frame_ids": np.asarray(frame_ids),
     }
-    np.savez_compressed(root / "point_cloud.npz", **arrays)
+    np.savez_compressed(out / "point_cloud.npz", **arrays)
     from .contracts import PointCloud
 
     save_point_cloud(
@@ -966,7 +975,7 @@ def run_section_alignment(
             arrays["frame_indices"],
             arrays["pixel_xy"],
         ),
-        root / "point_cloud.ply",
+        out / "point_cloud.ply",
     )
     report = {
         "frame_count": len(frame_ids),
@@ -976,9 +985,7 @@ def run_section_alignment(
         "cloud": "point_cloud.npz",
         "edges": edge_reports,
     }
-    (root / "alignment_report.json").write_text(
-        json.dumps(report, indent=2, allow_nan=False) + "\n"
-    )
+    (out / "alignment_report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     return report
 
 
