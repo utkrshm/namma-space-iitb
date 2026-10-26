@@ -1,5 +1,15 @@
 # Running VGGT reconstruction
 
+## Deferred experimental direction
+
+Per-view camera/depth refinement is a promising direction, but was explored too
+early; current work is focused on stabilizing base reconstruction. The experiment
+is preserved on `fix/recon-mv-refinement` at commit `6c7d168`, not implemented here.
+It improved measured correspondence and some living-wall appearance, but unsupported
+components and entrance layering remain unresolved. These exploratory results do not
+establish superiority or readiness for integration. Revisit after base reconstruction
+is stable. Detailed handoff: `git show fix/recon-mv-refinement:docs/REFINEMENT.md`.
+
 The reconstruction stage jointly infers cameras, depth and point maps from one or
 more images. `get_recon.py` consumes a frozen preprocessing directory, saves the
 processed outputs, and displays a coloured point cloud with Open3D.

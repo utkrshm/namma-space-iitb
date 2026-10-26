@@ -2,15 +2,13 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `21-10-26 16:05:39 IST`
+**Last updated:** `26-10-26 10:23:01 IST`
 
 ## Current Focus
 
-Both full captures have real reconstructed point clouds. User review found uneven
-Coorg floors; separate floor-aligned exports now provide a common Z-up/floor Z=0
-convention. Room uses one global rigid transform; Coorg uses per-view floor
-constraints. Work is on `feat/floor`, branched from `feat/reconstruction` at
-`175fb6f`, per user request. The interactive viewer remains unexecuted by the agent.
+Current work is on `feat/reconstruction` at `b5878d2`, focused on stabilizing base
+reconstruction. Both full captures have real reconstructed point clouds and separate
+floor-aligned exports. The interactive viewer remains unexecuted by the agent.
 
 ## Stage Status
 
@@ -22,15 +20,34 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 | Preprocessing | Verified on supplied captures; conservative repeated-structure filtering, known per-frame blur ambiguity |
 | VGGT inference and point-cloud export | Verified on both captures; interactive qualitative review pending |
 | Floor-plane alignment | Implemented and verified on real outputs; Coorg floor residuals reduced, cross-view drift remains |
+| Experimental multi-view refinement | Deferred; explored too early on separate branch `fix/recon-mv-refinement` (not implemented in this branch) |
 | Surface reconstruction, scene understanding and navigation | Planned |
 
 ## Latest Decision
+
+- **Timestamp:** `26-10-26 10:23:01 IST`
+- **Decision:** Focus `feat/reconstruction` on base reconstruction; defer multi-view refinement experiments as a promising direction explored too early.
+- **Reference:** “Focus base reconstruction; defer refinement experiments” in [PLANS.md](PLANS.md).
 
 - **Timestamp:** `21-10-26 15:58:08 IST`
 - **Decision:** Export separate semantic/RANSAC floor-aligned clouds; preserve Room with one rigid transform, use explicit single-floor per-view constraints for Coorg, and retain camera/point provenance.
 - **Reference:** “Floor-constrained point-cloud postprocessing” in [PLANS.md](PLANS.md).
 
 ## Current Progress
+
+### Deferred refinement experiments
+
+- User-directed status: per-view camera/depth refinement is a **promising direction,
+  but explored too early**. It improved measured correspondence and some living-wall
+  appearance, while unsupported components and entrance layering remain unresolved.
+- Revisit only after base reconstruction is stabilized. The experiment is preserved
+  on `fix/recon-mv-refinement` at commit `6c7d168`; it is not implemented in this
+  branch. Its targeted suite reported **88 passed** on that experimental branch only.
+- The experimental run reported dense components **8 → 3**, but persistent entrance
+  quality issues; these are exploratory results, not a validated claim that this
+  branch or method is superior. Generated artifacts remain in ignored local
+  `outputs/coorg_bnb/multiview_refinement/` and
+  `outputs/room_m_block/multiview_refinement/`.
 
 ### Floor alignment after user review
 

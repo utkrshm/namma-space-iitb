@@ -14,6 +14,15 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 26-10-26 10:23:01 IST — Focus base reconstruction; defer refinement experiments
+
+- **Status:** Adopted at user request.
+- **Decision:** Keep current `feat/reconstruction` work focused on stabilizing base reconstruction. Defer per-view camera/depth refinement, recorded as a promising direction explored too early. Preserve the experiment on `fix/recon-mv-refinement` at commit `6c7d168`; do not copy its implementation into this branch.
+- **Rationale and trade-offs:** The experimental branch improved measured correspondence and some living-wall appearance, but unsupported components and entrance layering remain unresolved. Revisit after base reconstruction is stabilized; exploratory results do not establish superiority or readiness for integration.
+- **Affected components:** Reconstruction focus and status in `docs/STATE.md` and this plan; brief deferred-direction note in `docs/RECONSTRUCTION.md`. Experimental code and generated outputs remain on their existing branch/local ignored paths.
+- **Implementation steps:** Preserve the experiment and its handoff at `git show fix/recon-mv-refinement:docs/REFINEMENT.md`; continue base reconstruction on this branch.
+- **Completion criteria:** Current branch documentation distinguishes deferred experiments from implemented work, retains earlier progress history, and makes no unvalidated comparative claim.
+
 ## 21-10-26 15:58:08 IST — Floor-constrained point-cloud postprocessing
 
 - **Status:** Adopted following user review of uneven Coorg floors.
