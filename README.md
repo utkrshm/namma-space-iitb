@@ -4,4 +4,4 @@ This is a repository to build a pipeline that converts smartphone captures of in
 
 Documentation: [Goals](docs/GOALS.md) · [Architecture](docs/ARCHITECTURE.md) · [Preprocessing](docs/PREPROCESSING.md) · [Reconstruction](docs/RECONSTRUCTION.md) · [Plans](docs/PLANS.md) · [State](docs/STATE.md) · [Agent instructions](AGENTS.md) · [Challenge brief](docs/Namma%20Space.pdf).
 
-Current experiment and handoff: [Multi-view refinement](docs/REFINEMENT.md).
+Current experiment, audit/control commands and execution checklist: [Multi-view refinement](docs/REFINEMENT.md).

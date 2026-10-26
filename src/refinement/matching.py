@@ -108,6 +108,31 @@ def _retrieve(scene, paths, config):
     return pairs
 
 
+def _matcher_signature(scene, paths, config):
+    return {
+        "version": 1,
+        "scene": scene.fingerprint,
+        "keypoints": config.keypoints,
+        "feature_size": config.feature_size,
+        "retrieval_top_k": config.retrieval_top_k,
+        "retrieval_exclusion_s": config.retrieval_exclusion_s,
+        "neighbor_offsets": list(config.neighbor_offsets),
+        "images": [hashlib.sha256(p.read_bytes()).hexdigest() for p in paths],
+    }
+
+
+def validate_track_cache(path, scene, input_dir, config):
+    """Implicit reuse requires the requested matcher, source images and whole-track split."""
+    summary = json.loads(Path(path).with_suffix(".json").read_text())
+    paths = [_source_path(scene, i, input_dir) for i in range(scene.frame_count)]
+    if summary.get("matcher_signature") != _matcher_signature(scene, paths, config):
+        raise ValueError("Cached matcher settings/images differ; use a new output directory")
+    tracks = load_observation_tracks(path, scene)
+    if not np.array_equal(tracks.split, split_tracks(tracks.track_indices, config.seed)):
+        raise ValueError("Cached split seed differs; use a new output directory")
+    return tracks
+
+
 def build_observation_tracks(scene, input_dir, output_dir, config):
     """Persist genuine image evidence and independently split complete multi-frame tracks."""
     import torch
@@ -122,16 +147,7 @@ def build_observation_tracks(scene, input_dir, output_dir, config):
     cache = root / "matches"
     cache.mkdir(parents=True, exist_ok=True)
     paths = [_source_path(scene, i, input_dir) for i in range(scene.frame_count)]
-    signature = {
-        "version": 1,
-        "scene": scene.fingerprint,
-        "keypoints": config.keypoints,
-        "feature_size": config.feature_size,
-        "retrieval_top_k": config.retrieval_top_k,
-        "retrieval_exclusion_s": config.retrieval_exclusion_s,
-        "neighbor_offsets": config.neighbor_offsets,
-        "images": [hashlib.sha256(p.read_bytes()).hexdigest() for p in paths],
-    }
+    signature = _matcher_signature(scene, paths, config)
     token = hashlib.sha256(json.dumps(signature, sort_keys=True).encode()).hexdigest()
     verifier = replace(
         RevisitConfig(),
@@ -241,6 +257,7 @@ def build_observation_tracks(scene, input_dir, output_dir, config):
     summary = {
         "scene_fingerprint": scene.fingerprint,
         "matcher_signature": signature,
+        "split_seed": config.seed,
         "candidate_pairs": len(pairs),
         "supported_pairs": len(accepted_pairs),
         "track_count": len(groups),

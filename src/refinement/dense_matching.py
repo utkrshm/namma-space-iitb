@@ -37,6 +37,9 @@ def augment_dense_tracks(scene, tracks, output_dir, config, candidate_report=Non
     for value in asdict(tracks).values():
         digest.update(np.ascontiguousarray(value).tobytes())
     digest.update(b"loftr-indoor-new-v2-confidence0.5-reciprocal-protect10")
+    digest.update(str(config.seed).encode())
+    if candidate_report and Path(candidate_report).is_file():
+        digest.update(Path(candidate_report).read_bytes())
     token = digest.hexdigest()[:16]
     cache = root / "dense_matches"
     cache.mkdir(exist_ok=True)

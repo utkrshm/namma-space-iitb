@@ -100,6 +100,12 @@ def sample_image(image, xy):
     xy = np.asarray(xy, np.float32)
     if not len(xy):
         return np.empty((0, *image.shape[2:]), np.float32)
+    # OpenCV remap uses signed-short destination dimensions, even for a point list.
+    if len(xy) >= 32767:
+        return np.concatenate(
+            [sample_image(image, xy[start : start + 30000]) for start in range(0, len(xy), 30000)]
+        )
+
     result = cv2.remap(
         image.astype(np.float32),
         xy[:, 0, None],

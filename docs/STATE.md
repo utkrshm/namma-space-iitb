@@ -2,33 +2,22 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `26-10-26` (session stopped at user's request)
+**Last updated:** `26-10-26 10:20:08 IST`
 
 ## Current Focus
 
-Work is on `fix/recon-mv-refinement`, implementing a separate scene-wide per-view
-camera/depth refinement stage following the full-video inspection. The existing
-section alignment was motivated by inspecting the initial
-Coorg BnB reconstruction against its source frames: overlapping/warped surfaces,
-detached fragments and inconsistent camera/depth geometry persist after floor
-leveling. All 161 selected Coorg frames now have a 518-resolution section-aligned
-export: four 36-view sections plus four 24-view tail sections, with an optimized
-eight-node/13-edge Sim(3) graph. Independent matched-observation consistency and
-actual-PLY visual inspection improve substantially over the initial 252 run.
-Residual wall/pose distortion and imperfect loop closure remain. Multi-view
-refinement now has explicit user authorization; surface fusion is not required
-to evaluate corrected observation geometry.
-Fresh execution and full-duration video comparison additionally confirm missing
-TV/feature-wall and glass-tabletop surfaces, substantial confidence-filter holes,
-an internal living-to-dining geometry failure and patterned export sparsity.
-See the detailed adopted decision in [PLANS.md](PLANS.md).
-
-**Handoff:** The first full-scene refinement is **not accepted**. User and agent
-inspection find severe distinct entrance layers, despite improved held-out feature
-metrics and improved living-wall consistency. Texture/regularization experiments
-do not resolve this. The latest reciprocal LoFTR revision is implemented but not
-run. No reconstruction process is running. Resume from [REFINEMENT.md](REFINEMENT.md),
-which lists commands, preserved outputs, measurements, limitations and next steps.
+Multi-view refinement is a **promising direction, but explored too early**. Preserve
+its executed dense-anchor Coorg run, constrained-pose export, joint-input M Block run,
+real matcher controls and export audits as experimental evidence; defer further
+refinement until base reconstruction is stabilized, then reassess its interaction
+with that stage. Active work is moving to `feat/reconstruction`; no evidence here
+establishes that branch as superior. Current refinement results improve some held-out
+metrics and visible structure but **do not meet the scene-quality goal**: entrance/
+upper-wall layering remains and the cloud is not navigation-ready.
+The latest execution checklist, JSON-derived measurements, exact commands and
+remaining checks are in [REFINEMENT.md](REFINEMENT.md). Results recorded here are
+the current machine's actual outputs; older results below remain historical and are
+not substituted for these runs. See [PLANS.md](PLANS.md) for the adopted design.
 
 ## Stage Status
 
@@ -41,43 +30,89 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 | VGGT inference and point-cloud export | Verified on both captures; Coorg original/section clouds also reviewed headlessly |
 | Floor-plane alignment | Implemented and verified on real outputs; Coorg floor residuals reduced, cross-view drift remains |
 | Coorg high-resolution section alignment | Verified on real Coorg outputs: connected global graph, all seven primary handoffs pass, improved consistency and visual structure; residual distortion remains |
-| Multi-view camera/depth refinement | Implemented; real Coorg first pass/experiments inspected and rejected for entrance regression; latest dense-anchor revision awaits execution |
+| Multi-view camera/depth refinement | Implemented and exercised on Coorg and M Block; all execution checks and audits completed, scene-quality goal not met |
 | Surface reconstruction, scene understanding and navigation | Planned |
 
 ## Latest Decision
 
-- **Timestamp:** `25-10-26 14:12:41 IST`
-- **Decision:** Use depth-scaled robust section registration with independent interior handoff validation, explicit endpoint stress reporting, verified revisit constraints and a global Sim(3) solve. Keep the first four 36-view sections and use four 24-view tail sections. Reject ICP corrections that do not improve held-out agreement.
-- **Reference:** “Depth-scaled fitting and independent interior handoff validation” in [PLANS.md](PLANS.md).
+- **Timestamp:** `26-10-26 10:20:08 IST`
+- **Decision:** Preserve multi-view refinement as promising but premature; defer it until base reconstruction is stabilized, reassess its interaction then, and make `feat/reconstruction` active work. No comparative superiority claim is supported.
+- **Reference:** “Defer multi-view refinement and return to reconstruction” in [PLANS.md](PLANS.md).
 
 ## Current Progress
 
-### Multi-view refinement session handoff
+### Multi-view refinement execution (current machine)
+
+- **Recorded `26-10-26 10:12:33 IST`:** Main execution regenerated the Coorg baseline
+  because prior multi-view outputs were not transferred. Its deterministic base tracks
+  remain **29,409 tracks / 78,861 observations**, 660 candidates and 252 supported
+  pairs. The baseline test median/p90 is **0.014908441925989 / 0.055694211609**.
+- Coorg `dense_links_v2` added **363 tracks / 726 observations**. Accepted pair counts:
+  23/24 **104**, 24/25 **70**, 36/37 **83**, 37/38 **59**, 140/141 **47**. The graph
+  changed from **8 to 3 components**, with anchors **0, 51, 140**; there is still no
+  link to isolated views 51–57 or the dining group 140–160. Main inspected two dense
+  match sheets from five accepted pair groups: floor/shoe anchors look plausible, while the repetitive grille
+  remains ambiguous and there is no independent accuracy proof. The dense result
+  improves the living wall, but entrance/upper-wall layering and green floor patches
+  remain; it is rejected as a successful whole-scene reconstruction.
+- Baseline refinement test median/p90 changes **0.014908441925989 / 0.055694211609 →
+  0.002817065372553119 / 0.01319972200159**. Dense-anchor test median/p90 changes
+  **0.0149222511 / 0.0557457992 → 0.00289809773 / 0.01325093729**; its denominator
+  changes with the added observations. The constrained-pose test used
+  `--field-steps 0 --geometry-prior-weight 0.2` and exact effective dense tracks
+  `tracks_c53000b9c55f7c84.npz`; its selected initial state is unchanged, before and
+  after **0.0149222511 / 0.0557457992**. Coorg dense output contains **1,673,762 points**.
+- The joint-input M Block route completed for all **36 frames** after an OpenCV remap
+  batch fix and resumption with `--export-only`. On **2,254** test pairs, median/p90
+  changed **0.024690008895 / 0.070772898169 → 0.003012746528 / 0.009096651970**.
+  It has one training component anchored at view 0 and **1,395,236 points**. Main's
+  visual review sees slight bed/room improvement, but holes remain; it is not
+  navigation-ready.
+- All four `audit_report.json` reports passed: regenerated baseline, dense Coorg,
+  constrained-pose Coorg and M Block. Dense Coorg also passed the enhanced
+  exact-metadata audit. Dense
+  held-out protection compared baseline
+  **78,861** to augmented **79,587** observations: **726** additions across five
+  pairs, original arrays/pairs unchanged, all additions training-only, **0** held-out
+  mask hits, nearest held-out distance **10.1782547 px** (median **46.5522 px**).
+  The real matcher controls accepted 400 positive warped matches (24×16 px), with median/p90 residual
+  **0.76069 / 1.19252**; blank control returned zero and cross-capture control
+  returned zero. Flow added 850 training-only observations with zero held-out mask
+  hits. Its minimum integer-rounded Euclidean distance was **9.393 px**; do not
+  describe this as satisfying a continuous 10 px radius.
+- Main inspected PLY-backed `geometry_comparison.jpg` (three angles), `supported_comparison`,
+  and `camera_comparison_00.jpg` for dense Coorg; component views 51 and 140; M Block
+  `geometry_comparison.jpg` and `camera_comparison_04`; and constrained-pose geometry
+  (initial/identity state). Dense-match sheets `dense_matches_00.jpg` and
+  `dense_matches_04.jpg` were inspected (five accepted pair groups, not five sheets).
+  Sampled matches look plausible, but
+  repeated grille ambiguity remains and there is no independent truth validation.
+  These checks support the observations above, not ground-truth geometric accuracy.
+- **Confirmed checks:** `OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync pytest tests/test_refinement.py tests/test_refinement_cache.py tests/test_refinement_controls.py tests/test_refinement_inspection.py tests/test_refinement_validation.py tests/reconstruction -q` — **88 passed in 53.87 s**. Targeted Ruff check on `src/refinement`, these five tests, `src/__init__.py` and four refinement/validation scripts passed; formatting on 23 Python files passed; `uv lock --check` and `git diff --check` passed. Unscoped `uv run --no-sync ruff check` returned **1,943 pre-existing findings** under vendored `src/reconstruction/deps`; full-repository Ruff is not clean.
+
+### Earlier multi-view refinement session (historical machine)
 
 - Created `fix/recon-mv-refinement`, implemented separate `src/refinement/` APIs,
   `refine_multiview.py` / `namma-refine`, actual-PLY inspection, documentation and
   meaningful analytic optimizer/geometry tests. Full scene inference artifacts remain
   separate. No source captures, preprocessing selections or section predictions changed.
-- Real Coorg learned graph: 660 candidates, 252 supported pairs, 29,409 tracks and
+- Historical real Coorg learned graph: 660 candidates, 252 supported pairs, 29,409 tracks and
   78,861 observations. Whole tracks are split train/validation/test. First-pass test
   median/p90 disagreement improves 0.014908/0.055694 → 0.002722/0.012388; reprojection
   median/p90 improves 5.399/23.305 → 0.827/2.272 model pixels. Actual source-pixel
   clouds show significant entrance regression: these numerical improvements do not
   establish a good scene. User confirms severe multiple entrance layers and improved
   wall behind the person.
-- First-pass graph has eight anchored groups, including three unsupported views.
+- Historical first-pass graph had eight anchored groups, including three unsupported views.
   Independent entrance window/ceiling groups remain a central weakness. Sparse
   texture anchors and a dense initialization-displacement prior were tested, exported
   and inspected, with persistent entrance layering. A first real LoFTR experiment
   at 0.9 confidence accepted no additional observations. A revised 0.5-confidence,
-  reciprocal, broader cross-group matcher is implemented but **not run**.
-- Preserved user-inspected root outputs under `outputs/coorg_bnb/multiview_refinement/`
-  and follow-ups under `experiments/`. Latest revision should run into a new
-  `experiments/dense_links_v2/` directory using the exact command in the handoff.
-- `OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync pytest tests/test_refinement.py tests/reconstruction -q`:
-  **57 passed**. Real Coorg execution and headless actual-cloud inspection completed;
-  dedicated dense-matcher controls and a second scene remain pending. User requested
-  immediate commit/handoff; no reconstruction/inspection processes remain running.
+  reciprocal, broader cross-group matcher was not yet run on that historical machine;
+  it has since run on the current machine as documented above.
+- Historical outputs were not transferred; the current baseline was regenerated.
+- The historical machine ran `OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync pytest tests/test_refinement.py tests/reconstruction -q`:
+  **57 passed**. Current-machine checks are listed above.
 
 ### Fresh Coorg execution and full-duration capture review
 
@@ -368,9 +403,10 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 
 ## Blockers
 
-- Whole-scene multi-view refinement is not yet qualitatively acceptable: severe
-  distinct entrance layers persist. Resume the measured cross-group anchor
-  experiment and visual acceptance procedure in [REFINEMENT.md](REFINEMENT.md).
+- Whole-scene multi-view refinement is not qualitatively acceptable: distinct
+  entrance/upper-wall layers and holes persist. Follow the checklist and visual
+  acceptance criteria in [REFINEMENT.md](REFINEMENT.md); improved held-out metrics
+  are insufficient for acceptance.
 - Coorg's initial section-alignment benchmark is met, but residual within-section
   warping, endpoint pose/depth outliers and conflicting revisit measurements remain.
   A single similarity per section cannot remove these. Do not advance to observation

@@ -297,6 +297,16 @@ and headless inspection images. Same-observation geometry comparisons are separa
 from optional multi-view-supported observation selection. This stage precedes
 surface fusion and does not manufacture unseen surfaces or establish metric scale.
 
+`validation.py` provides a separate audit boundary for exported refinement artifacts.
+The root `validate_multiview.py` audits saved cloud/array correspondence, source
+metadata, pixel identity and provenance, writing `audit_report.json` or failing on
+inconsistency. Refinement exports persist the effective track set; `--export-only`
+uses that saved evidence and corrections without rerunning matching. Implicit cache
+reuse rejects mismatched requested matcher settings; explicit track overrides are
+recorded in provenance. Real matching-control checks are available through
+`validate_refinement_matching.py`. Current execution outcomes and outstanding
+verification are tracked in [REFINEMENT.md](REFINEMENT.md).
+
 ## 4. Geometric reconstruction
 
 Reconstruction combines the estimated observations into a coherent scene representation. It aligns and fuses points, removes inconsistent observations, estimates surfaces and generates geometry suitable for downstream use. The visual representation and the geometry used for spatial reasoning serve different purposes.

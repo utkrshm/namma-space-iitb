@@ -14,6 +14,23 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 26-10-26 10:20:08 IST — Defer multi-view refinement and return to reconstruction
+
+- **Status:** Adopted at the user's request on `fix/recon-mv-refinement`.
+- **Decision:** Preserve the multi-view refinement implementation, experiments and execution results as a promising direction, but regard it as explored too early. Defer further refinement until base reconstruction is stabilized, then reassess how refinement should interact with that stage. Switch active work to `feat/reconstruction`.
+- **Rationale and trade-offs:** Current experiments improve some held-out metrics and visible structure, but entrance/upper-wall layering and coverage defects remain, so they do not establish acceptable scene quality. The experiments remain useful evidence; there is no measured evidence here that `feat/reconstruction` is superior.
+- **Affected components:** `docs/STATE.md`, `docs/REFINEMENT.md`, and this decision log; subsequent implementation work proceeds on `feat/reconstruction`.
+- **Implementation steps:** Preserve all recorded commands, measurements, audits and quality blockers; mark refinement deferred in the state and execution handoff; do not claim a comparative branch result without evidence.
+- **Completion criteria:** The refinement status accurately communicates promising-but-premature work, retains its findings, and makes base reconstruction stabilization the active focus.
+
+## 26-10-26 09:20:24 IST — Execute refinement handoff and audit real exports
+
+- **Status:** Adopted on `fix/recon-mv-refinement` at the user's request.
+- **Evidence:** Prior refinement outputs were not transferred; regenerated the current-default Coorg baseline and ran `dense_links_v2`. Real LoFTR adds 363 correspondences and reduces eight training components to three, but actual-PLY views still show entrance/upper-wall layering. M Block optimization completes, but export exceeds OpenCV's signed-short remap destination-size limit.
+- **Decision:** Batch image sampling below that limit without changing interpolation semantics. Validate implicit track caches against image/matcher settings and split seed. Add reusable export audits and real-image matcher/flow controls, well-supported worst-pair inspection and per-component diagnostics. Keep original predictions immutable and all experiments separately named.
+- **Follow-up experiment:** Evaluate the existing pose/scale-only mode with a stronger initialization-displacement prior (`--field-steps 0 --geometry-prior-weight 0.2`) using the same measured dense links. This constrains deformation; it cannot establish missing cross-component alignment. Record an unresolved quality blocker if inspection still fails.
+- **Completion criteria:** Both input routes export and receive actual-PLY inspection; full exported-point RGB/pixel/XYZ/camera-z/support audits pass; real positive/negative LoFTR controls and held-out flow protection are exercised; code checks pass; exact outputs, checklist outcomes and quality limitations are recorded in `REFINEMENT.md` and `STATE.md`.
+
 ## 26-10-26 00:27:23 IST — Texture-track anchors after first full-scene inspection
 
 - **Status:** Adopted experiment; preserve the first complete refinement export for the user's interactive inspection.

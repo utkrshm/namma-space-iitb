@@ -89,6 +89,13 @@ def test_border_sampling_and_content_field_interpolation():
     )
 
 
+def test_sampling_large_point_batch_matches_small_batch():
+    image = np.arange(64, dtype=np.float32).reshape(8, 8)
+    xy = np.tile([[0, 0], [7, 7], [-1, 0], [2.25, 4.5]], (20000, 1))
+    expected = np.tile(sample_image(image, xy[:4]), 20000)
+    np.testing.assert_allclose(sample_image(image, xy), expected, equal_nan=True)
+
+
 def test_real_optimizer_recovers_heldout_multicamera_agreement():
     scene, tracks = analytic_scene()
     before = evaluate_refinement(scene, tracks)

@@ -1,17 +1,20 @@
 # Multi-view refinement: execution and handoff
 
-## Status at session stop (26-10-26)
+## Current execution status (26-10-26)
 
-Implementation is on `fix/recon-mv-refinement`. **The first Coorg result is not
-accepted as a good whole-scene reconstruction.** Real feature consistency improves
-substantially, but the user and agent both inspected severe distinct entrance
-layers. The wall behind the person improves. Subsequent regularization and sparse
-texture anchors do not resolve the entrance. The latest detector-free matching
-revision is implemented but has **not** been run or qualitatively verified.
-
-The user requested an immediate session handoff. No reconstruction/inspection
-process remains running. Original preprocessing, VGGT predictions, section graphs
-and first-pass refinement exports are preserved.
+Implementation and experiments are preserved on `fix/recon-mv-refinement`. This is
+a **promising direction, but explored too early**: defer further refinement until
+base reconstruction is stabilized, then reassess how it should interact with that
+stage. Active work is moving to `feat/reconstruction`; no evidence establishes that
+branch as superior. Dense Coorg matching, constrained-pose export, joint-input M Block
+refinement, matcher controls and real export audits have run. Targeted test, lint,
+format and lock checks are confirmed. **Neither scene is accepted as a navigation-ready
+reconstruction.**
+Coorg's living wall improves, but entrance/upper-wall layering and green floor patches
+remain. M Block's bed/room structure improves slightly, but holes remain. The
+execution checklist below distinguishes completed verification from failed scene
+quality acceptance. This document distinguishes historical outputs on the previous
+machine from the current machine's regenerated baseline.
 
 ## Setup
 
@@ -26,7 +29,7 @@ detector-free anchors use real Kornia indoor LoFTR weights downloaded from
 
 ## Commands
 
-Default separate refinement of an aligned section export:
+Default separate refinement of an aligned section export (fresh output path):
 
 ```sh
 OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync python refine_multiview.py \
@@ -35,9 +38,9 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync python refine_multivie
 
 The equivalent installed entry point is `uv run --no-sync namma-refine`.
 Joint inference exports, e.g. `outputs/room_m_block/reconstruction`, use the same
-interface. That second-capture execution is still pending.
+interface. The current-machine M Block joint-input execution is recorded below.
 
-**Next experiment to run**, preserving the result already inspected by the user:
+The current Coorg dense-anchor execution, already run, was:
 
 ```sh
 OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync python refine_multiview.py \
@@ -45,6 +48,27 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync python refine_multivie
   --output-dir outputs/coorg_bnb/multiview_refinement/experiments/dense_links_v2 \
   --tracks outputs/coorg_bnb/multiview_refinement/tracks.npz --dense-anchors
 ```
+
+The constrained-pose export reused the resulting effective track set, not the
+pre-dense base tracks:
+
+```sh
+OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync python refine_multiview.py \
+  outputs/coorg_bnb/section_alignment \
+  --output-dir outputs/coorg_bnb/multiview_refinement/experiments/constrained_pose \
+  --tracks outputs/coorg_bnb/multiview_refinement/experiments/dense_links_v2/dense_matches/tracks_c53000b9c55f7c84.npz \
+  --field-steps 0 --geometry-prior-weight 0.2
+```
+
+`--export-only` consumes saved `effective_tracks.npz` when present (or the legacy
+single unambiguous base/dense tracks cache) and saved corrections; it does not run
+the matcher again. The original dense run's effective augmentation is represented by
+`dense_matches/tracks_c53000b9c55f7c84.npz`; do not assume that run has an
+`effective_tracks.npz`. New runs save `effective_tracks.npz`. Implicit
+cache reuse validates requested matching settings and rejects mismatches. An explicit
+`--tracks` override is permitted and recorded in manifest provenance; it validates
+source identity/split integrity but intentionally may supply different matcher
+settings. Keep the requested configuration and effective track artifact together.
 
 Optional `--flow-anchors` adds real, conservative pyramidal Lucas–Kanade tracks.
 `--matching-only` stops after observation construction. `--pose-steps`,
@@ -67,6 +91,28 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync python inspect_multivi
   outputs/coorg_bnb/multiview_refinement --input-dir outputs/coorg_bnb/section_alignment
 ```
 
+Audit exported arrays, source metadata, pixel/provenance consistency and the saved
+PLYs. The script writes `audit_report.json` and fails on inconsistencies:
+
+```sh
+OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync python validate_multiview.py \
+  outputs/coorg_bnb/multiview_refinement/experiments/dense_links_v2 \
+  --input-dir outputs/coorg_bnb/section_alignment
+```
+
+Run real LoFTR positive/negative controls and the flow held-out protection audit:
+
+```sh
+OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync python validate_refinement_matching.py \
+  --input-dir outputs/coorg_bnb/section_alignment \
+  --tracks outputs/coorg_bnb/multiview_refinement/tracks.npz \
+  --output-dir outputs/coorg_bnb/multiview_refinement/validation_controls \
+  --negative-input-dir outputs/room_m_block/reconstruction
+```
+
+These are the actual executed control paths; M Block's negative input is its joint
+`reconstruction/` export, not a section-alignment directory.
+
 ## Implemented procedure and boundaries
 
 - `src/refinement/inputs.py`: adapt joint or section-aligned depth predictions to
@@ -84,10 +130,10 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync python inspect_multivi
 - `flow.py`: optional additional image texture anchors. Forward/backward flow,
   patch appearance/uniqueness and image geometric support are required. Validation
   and test feature neighborhoods are protected; new tracks enter training only.
-- `dense_matching.py`: optional LoFTR across weak/disconnected groups. The first
+- `dense_matching.py`: optional LoFTR across weak/disconnected groups. Historically, the first
   0.9-confidence experiment accepted zero anchors. A real model probe found its
   confidence distribution much lower (e.g. maximum 0.890 for frames 23/24). The
-  **unrun latest revision** uses 0.5 confidence, reciprocal matches within 1.5
+  revision subsequently executed in `dense_links_v2` uses 0.5 confidence, reciprocal matches within 1.5
   matcher pixels, protected held-out neighborhoods, broad image support and robust
   epipolar checks. Candidate selection now includes compatible initial camera views
   across each component pair, rather than only nearby temporal gaps.
@@ -123,7 +169,7 @@ Coordinates remain arbitrary input-scene units, not metres.
 
 ## Real results retained
 
-### First pass: `outputs/coorg_bnb/multiview_refinement/`
+### Historical first pass (previous machine): `outputs/coorg_bnb/multiview_refinement/`
 
 - 161 input views; 660 candidate pairs; 252 supported pairs;
   29,409 learned tracks / 78,861 observations; 848 conflicting merges rejected.
@@ -141,39 +187,112 @@ Coordinates remain arbitrary input-scene units, not metres.
   not accepted. Original-observation clouds make the regression visible independently
   of point density/support filtering.
 
-### Follow-up experiments
+### Historical follow-up experiments (previous machine)
 
 - `experiments/texture_anchors/`: first conservative texture-anchor experiment.
 - `experiments/regularized_texture/`: 381 additional texture tracks / 850 observations
   with protected validation/test neighborhoods, plus dense displacement prior.
   Whole-scene held-out consistency still improves; entrance layering persists in
   actual-cloud inspection. User has been given this cloud's path too.
-- `experiments/dense_anchors/`: completed first LoFTR attempt (0.9 cutoff), zero
-  added observations, eight groups remain. **Do not confuse these outputs with the
-  latest 0.5/reciprocal revision, which has not been executed.**
+- `experiments/dense_anchors/`: first LoFTR attempt (0.9 cutoff), zero added
+  observations. This is distinct from the executed current-machine `dense_links_v2`.
 
-## Remaining plan, in order
+### Current-machine runs
 
-1. Run `dense_links_v2` above and inspect accepted matches themselves, especially
-   repeated window structures; do not accept false repeated-pattern links just to
-   connect the graph. Check which entrance groups actually gain measured links.
-2. Inspect actual same-observation geometry and the support-selected PLY from
-   multiple angles. The entrance must improve while preserving the living-wall
-   gain. Add per-group/surface diagnostics; pooled feature residuals alone are
-   demonstrably insufficient. Expand inspection selection to include well-supported
-   worst pairs (the current automatic selector can prioritize tiny one-match pairs).
-3. If measured links remain weak, add justified cross-view geometric constraints
-   or constrain unsupported correction modes. Do not treat independent component
-   gauges or filtering-away surfaces as successful global reconstruction.
-4. Audit geometry/support/camera-z and full source-pixel provenance on the selected
-   final real export. Improve cache-setting validation before relying on implicit
-   reuse after changing matcher parameters/split seed; explicit `--tracks` currently
-   checks source identity and split integrity, not requested matcher settings.
-5. Exercise the joint-input route on the supplied M Block capture, inspect it, and
-   run real LoFTR-specific positive/negative controls and flow-protection checks.
-6. Record the accepted configuration/results or remaining blocker in `STATE.md`.
+- The earlier machine's outputs were **not transferred**. Main regenerated the
+  baseline under the current defaults: 29,409 tracks / 78,861 observations, 660
+  candidates / 252 supported pairs. Baseline test median/p90:
+  **0.014908441925989 / 0.055694211609**.
+- `experiments/dense_links_v2/` added **363 links / 726 observations**: pair counts
+  23/24=104, 24/25=70, 36/37=83, 37/38=59, 140/141=47. Components decreased 8→3,
+  with anchors 0, 51, 140; there remains no link to isolated views 51–57 or dining
+  views 140–160. Two match sheets from five accepted pair groups were inspected: anchors on shoes/floor
+  look plausible, but the repeated grille remains ambiguous and is not independently
+  accuracy-validated. Actual PLY review found improved living-wall consistency but
+  rejected the scene for persistent entrance/upper-wall layering and green floor
+  patches.
+- Baseline refinement test median/p90 changes **0.014908441925989 / 0.055694211609 →
+  0.002817065372553119 / 0.01319972200159**. Dense-anchor test median/p90 changes
+  **0.0149222511 / 0.0557457992 → 0.00289809773 / 0.01325093729**; its denominator
+  changes with the added observations. The constrained-pose export used
+  `--field-steps 0 --geometry-prior-weight 0.2`
+  and exact dense tracks `tracks_c53000b9c55f7c84.npz`. Its selected state is the
+  initial checkpoint, **not a newly improved reconstruction**. Test median/p90 before
+  and after are unchanged at **0.0149222511 / 0.0557457992**
+  in its initial selected state (no gain; this is not the fixed-original-denominator
+  comparison). Dense Coorg export:
+  **1,673,762 points**.
+- M Block joint route completed for 36 frames. After the OpenCV remap batch fix,
+  export resumed with `--export-only`; it used saved effective tracks, not a matcher
+  rerun. For **2,254** test pairs, median/p90 changed **0.024690008895 /
+  0.070772898169 → 0.003012746528 / 0.009096651970**. One training component is
+  anchored at view 0. Export contains **1,395,236 points**. Main sees slight bed/room
+  improvement, but remaining holes make it unsuitable for navigation.
+- All four `audit_report.json` reports passed: regenerated baseline, dense Coorg,
+  constrained-pose Coorg and M Block. Dense Coorg also passed the enhanced
+  exact-metadata audit. The dense held-out protection report compared
+  baseline **78,861** to augmented **79,587** observations: **726** added across five
+  pairs, original arrays/pairs unchanged, all additions training-only, **0** held-out
+  mask hits, nearest held-out distance **10.1782547 px** (median **46.5522 px**).
+  Main inspected PLY-backed `geometry_comparison.jpg` (three angles), `supported_comparison`,
+  and `camera_comparison_00.jpg` for dense Coorg; component views 51 and 140; M Block
+  `geometry_comparison.jpg` and `camera_comparison_04`; and constrained-pose geometry
+  (initial/identity state). Dense-match sheets `dense_matches_00.jpg` and
+  `dense_matches_04.jpg` were inspected (five accepted pair groups, not five sheets).
+  Sampled measured matches look plausible,
+  but repetitive grille ambiguity remains and there is no independent truth validation.
+- Real controls: positive accepted **400** warped matches over a **24×16 px** grid,
+  residual median/p90 **0.76069 / 1.19252**; blank control **0**, cross-capture
+  control **0**. Flow added **850** training-only observations and had **0** held-out
+  mask hits. The minimum Euclidean distance was **9.393 px** after integer-rounded
+  masks, so this is not evidence of a continuous radius ≥10 px.
+- Confirmed tests: `OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync pytest tests/test_refinement.py tests/test_refinement_cache.py tests/test_refinement_controls.py tests/test_refinement_inspection.py tests/test_refinement_validation.py tests/reconstruction -q` — **88 passed in 53.87 s**.
+- Targeted `uv run --no-sync ruff check` on `src/refinement`, the five test files,
+  `src/__init__.py`, and the four refinement/validation scripts passed. Ruff format
+  check on the 23 affected Python files passed; `uv lock --check` and
+  `git diff --check` passed. Separate unscoped `uv run --no-sync ruff check`
+  reported **1,943 pre-existing vendored-submodule findings** under
+  `src/reconstruction/deps`; full-repository Ruff therefore does not pass.
 
-## Checks completed before handoff
+## Execution checklist against the original acceptance goals
+
+1. **Execute dense cross-group matching — executed, graph coverage incomplete.**
+   Five pair groups were accepted; graph components fell 8→3, but views 51–57 and
+   dining 140–160 remain without a connecting link. Repetitive grille ambiguity
+   remains a quality risk.
+2. **Inspect accepted matches and actual geometry — inspection completed; quality
+   goal failed.** Main inspected the dense PLY geometry, supported comparison, camera
+   and component views; M Block geometry/camera views; constrained-pose geometry; and
+   the two inspected dense-match sheets from five accepted pair groups. Living wall improves, but entrance/upper-wall
+   layers and green floor patches persist. Sampled match plausibility is not independent
+   truth validation; no whole-scene acceptance.
+3. **Evaluate constrained correction and the second capture — executed; goal failed.**
+   Coorg selected the initial checkpoint and is not a newly improved solution. M Block
+   improves some room structure slightly but has holes and is not navigation-ready.
+4. **Audit output integrity and held-out protections — passed for all four outputs.**
+   Dense held-out audit confirms 726 added
+   training-only observations, unchanged original arrays/pairs, zero mask hits and
+   nearest held-out distance 10.1782547 px (median 46.5522 px).
+5. **Run real matcher controls — executed with limits.** Positive/blank/cross-capture
+   outcomes and flow additions are recorded above. Integer-rounded mask distance
+   does not establish a continuous 10 px exclusion radius.
+6. **Finalize verification — execution complete; quality acceptance failed.** Targeted
+   tests and scoped lint/format/lock checks passed; visual inspection, dense held-out
+   audit, and all four export audits completed.
+   Entrance/upper-wall layering and floor patches remain a blocking quality failure;
+   improved held-out metrics do not change that verdict.
+
+## Deferred follow-up, after base reconstruction stabilizes
+
+1. Investigate why entrance/upper-wall geometry remains layered despite cross-group
+   evidence. Do not accept false repeated-pattern links just to connect the graph.
+2. Add justified cross-view constraints or constrain unsupported correction modes
+   where evidence supports it. Do not treat independent component gauges or
+   filtering-away surfaces as successful global reconstruction.
+3. Reassess scene quality against actual source views; do not advance to surface fusion
+   or navigation until entrance geometry and coverage are acceptable.
+
+## Historical checks (previous machine; not the current combined test run)
 
 ```sh
 OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 uv run --no-sync pytest tests/test_refinement.py tests/reconstruction -q
@@ -183,11 +302,11 @@ uv lock --check
 git diff --check
 ```
 
-Tests: **57 passed**. They include real analytic multi-camera optimization recovery,
+Historical tests: **57 passed**. Current-machine confirmed checks are recorded above.
+The historical suite included real analytic multi-camera optimization recovery,
 whole-track splitting/conflicts, border/field interpolation, similarity-invariant
 metrics, camera-z contracts and occlusion semantics. Existing reconstruction tests
-also pass. Real Coorg matching/refinement/export/inspection ran. The latest dense
-matcher revision, its dedicated real controls and second-capture execution remain pending.
+also pass.
 
 ## Moving to another machine
 
