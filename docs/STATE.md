@@ -34,6 +34,9 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 | Floor-plane alignment | Implemented and verified on real outputs; Coorg floor residuals reduced, cross-view drift remains |
 | Coorg high-resolution section alignment | Verified on real Coorg outputs: connected global graph, all seven primary handoffs pass, improved consistency and visual structure; residual distortion remains |
 | Loop closure (`src/loop_closure/`) | Implemented and run on real Coorg outputs; B gives a measurable gain (sequential −35%, held-out loops −10%); dining-wing drift and wall layering remain (no verifiable dining loop in this capture) |
+| Gaussian splatting (`src/splatting`) | Implemented (awaiting verification on development server) |
+| Shared rendering and Python/Viser viewer | Implemented (awaiting verification on development server) |
+| Dense SfM and high-quality splatting (`src/sfm/`) | In progress on `feat/dense-sfm-splat` |
 | Surface reconstruction, scene understanding and navigation | Planned |
 
 ## Latest Decision
@@ -49,6 +52,35 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 - **Reference:** “Depth-scaled fitting and independent interior handoff validation” in [PLANS.md](PLANS.md).
 
 ## Current Progress
+
+### Gaussian splatting — authored, not executed
+
+- **Recorded `27-10-26 02:46:18 IST`:** Added `src/splatting`, `src/rendering`,
+  `configs/gaussian_splatting.toml`, an example scene manifest, root training/rendering/
+  viewing scripts, CLI entry points, optional dependency groups and stage exports.
+- The input contract requires aligned RGB, decoded VGGT camera-head world-to-camera
+  extrinsics/intrinsics, refined camera-Z depth and world-space point maps. It
+  records source frame IDs/timestamps, image transforms, scale and optional masks/
+  confidence. Shapes, camera transforms and own-camera depth/reprojection agreement
+  are checked explicitly. Paths support per-frame NPY and named/indexed NPZ arrays.
+- Training-only bounded point sampling, multiview depth support, voxel fusion,
+  outlier removal and nearest-neighbor scales seed fixed-camera RGB/SSIM/depth
+  optimization. Budgeted adaptive refinement retains optimizer alignment. Checkpoints
+  save parameters, optimizer/refinement/RNG state, input fingerprints and versions.
+- Export includes standard full-SH Gaussian PLY, metadata, numeric metrics and
+  reference/render previews. The shared renderer produces RGB/alpha/camera-Z depth;
+  the server-side Python/Viser viewer uses it for view-dependent appearance.
+  The integer-centre VGGT to half-integer gsplat raster convention is converted
+  explicitly at the rendering boundary.
+- Tests are written for file/camera contracts, geometry filtering, holdout exclusion,
+  budgets, SH PLY and Adam checkpoint continuation, NaN-safe losses, topology state,
+  real CUDA training/rendering and raster pixel-centre alignment. **All are not run.**
+  No fake renderer or substitute model was used.
+- [SPLATTING.md](SPLATTING.md) documents the exact contract, API, server commands,
+  outputs, limitations and verification steps. `uv.lock` is unchanged because
+  dependency resolution must be performed on the development server.
+
+
 
 ### Loop closure on Coorg (`feat/LoopClosure`)
 
@@ -348,6 +380,12 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
   A complete joint reconstruction is available at 252 resolution; the implemented
   overlapping-section strategy now also supplies a complete 518-resolution export.
 - No preprocessing execution or dependency blockers remain for the supplied SDR videos.
+- The development server and actual refined VGGT files are inaccessible. Dependency
+  resolution/CUDA compilation, lint/tests, actual file integration, viewer operation,
+  memory/performance and real-capture splat quality remain unverified. No visual
+  inspection of splatting output has been performed. Resolve the lockfile on the
+  development server before using locked dependency workflows.
+- No execution or dependency blockers remain for the supplied SDR videos.
 - Per-frame blur classification is ambiguous for the labelled 49.5 s door at
   analysis resolution; the full pipeline uses context. Conservative self-similarity
   filtering can discard true loop links, as observed for one luggage pair.
@@ -362,3 +400,11 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
    video to review remaining registration and within-section errors.
 3. Await explicit user direction before multi-view observation fusion, surface
    generation or navigation work. Preserve frozen preprocessing and provenance.
+1. On the development server, resolve splatting dependencies and run the documented
+   lint, CPU and real-CUDA tests; record failures and actual versions.
+2. Map the actual refined VGGT output layout to the documented manifest. Train a
+   representative capture, inspect held-out previews and the viewer, and record
+   quality/memory findings before declaring this stage verified.
+3. Retain preprocessing follow-ups: review accepted revisit images, consider richer
+   blur evidence if needed, and integrate reconstruction through `load_result(output_dir)`
+   while preserving source/candidate provenance.
