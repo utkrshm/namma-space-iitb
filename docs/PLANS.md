@@ -14,6 +14,15 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 27-10-26 02:30:17 IST — Geometry-initialized Gaussian splatting
+
+- **Status:** Adopted; code authoring only, runtime verification deferred to the development server.
+- **Decision:** Implement `src/splatting` on `feat/splatting`, consuming a versioned JSON manifest of RGB images, decoded VGGT camera-head extrinsics/intrinsics, refined camera-Z depth and refined world-space point maps. Use PyTorch and gsplat 1.5.3 for geometry-initialized, RGB/depth-supervised 3D Gaussian optimization. Keep cameras fixed. Provide `src/rendering`, offline rendering, and a Python-launched Viser viewer using the same full spherical-harmonic renderer.
+- **Rationale and trade-offs:** The upstream files are on an inaccessible development server, so define the handoff explicitly rather than guessing its filenames. Preserve source identities, image transforms, world coordinates and arbitrary reconstruction scale. Initialization uses training views only, confidence/validity filtering, reprojection and multiview depth checks, bounded sampling, voxel fusion and nearest-neighbor scales. A temporal holdout measures novel-view appearance without feeding its geometry into initialization. CUDA execution belongs exclusively to the development server; no third-party compute is involved.
+- **Affected components:** `src/splatting/`, `src/rendering/`, root training/rendering/viewing scripts, `configs/gaussian_splatting.toml`, optional dependencies, tests, and splatting/architecture/state documentation.
+- **Implementation steps:** Define strict contracts/configuration; implement memory-bounded geometry loading and initialization; add RGB/SSIM and decaying relative depth losses, capped adaptive refinement, resumable checkpoints and standard SH PLY; share differentiable rendering with the viewer; write real-implementation tests and server commands.
+- **Completion criteria:** Code and tests are written, statically reviewed, and documented. Dependency resolution, lint, tests, CUDA compilation, actual VGGT integration, reconstruction quality and visual inspection remain explicitly unverified until run on the development server. Do not execute project code, install dependencies, train or render on the authoring machine.
+
 ## 21-10-26 02:39:40 IST — Reject descriptor-ambiguous repeated structures
 
 - **Status:** Adopted following round-three user review.

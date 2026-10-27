@@ -209,6 +209,21 @@ Reconstruction combines the estimated observations into a coherent scene represe
 
 Gaussian splatting represents the scene using 3D Gaussian primitives whose appearance is fitted to captured images using estimated cameras. Rendering these primitives supports views from positions other than the original capture viewpoints. Its role is to provide the visual appearance of the digital twin.
 
+The authored implementation is `src/splatting`. Its handoff is a schema-1 JSON
+manifest referencing aligned RGB images, decoded camera-head intrinsics and
+world-to-camera poses, refined camera-Z depth and refined world-space point maps.
+It preserves source frame IDs, timestamps, image transforms and scene units.
+Training-only point fusion initializes Gaussians; fixed-camera RGB/SSIM and depth
+optimization uses gsplat with budgeted adaptive refinement. Checkpoints retain
+optimizer/refinement/RNG state; standard Gaussian PLY retains all SH coefficients.
+
+`src/rendering` supplies the shared differentiable RGB/alpha/camera-Z renderer.
+The root scripts `train_gaussian_splat.py`, `render_gaussian_splat.py` and
+`view_gaussian_splat.py` train, render posed views and launch a Python/Viser viewer.
+All execution targets the development server. No reconstruction or visual-quality
+verification has been performed for this stage yet. The exact schema, commands,
+configuration and verification procedure are in [SPLATTING.md](SPLATTING.md).
+
 ### Scene geometry: mesh / TSDF
 
 Explicit geometry represents surfaces and spatial boundaries for collision checking and navigation. A mesh describes surfaces with vertices and faces. A truncated signed distance field (TSDF) stores distances near observed surfaces and can support fusion and mesh extraction. This representation supplies geometric information that a photorealistic rendering alone does not establish.

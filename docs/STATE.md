@@ -2,13 +2,15 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `21-10-26 03:09:09 IST`
+**Last updated:** `27-10-26 02:46:18 IST`
 
 ## Current Focus
 
-Round-three review corrections applied: descriptor self-similarity filtering rejects
-repeated-window ambiguity. Real positive/negative revisit controls and a real
-spliced-input tracking-break control pass. User commit `4a6a0a3` is retained.
+Gaussian-splatting code authored on `feat/splatting` for execution exclusively on
+the development server. Upstream refined VGGT files and that server are currently
+unavailable. No dependencies, lint, tests, training, rendering or viewer runtime
+checks were executed on the authoring machine. Earlier verified preprocessing
+results are retained below.
 
 ## Stage Status
 
@@ -18,15 +20,46 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 | --- | --- |
 | Documentation scaffolding | Verified |
 | Preprocessing | Verified on supplied captures; conservative repeated-structure filtering, known per-frame blur ambiguity |
-| Reconstruction, scene understanding and navigation | Planned |
+| Gaussian splatting (`src/splatting`) | Implemented (awaiting verification on development server) |
+| Shared rendering and Python/Viser viewer | Implemented (awaiting verification on development server) |
+| Upstream VGGT/refinement integration, scene understanding and navigation | Planned |
 
 ## Latest Decision
 
-- **Timestamp:** `21-10-26 02:39:40 IST`
-- **Decision:** Reject repeated-structure descriptor ambiguity before geometric verification; use pass-specific cache provenance.
-- **Reference:** “Reject descriptor-ambiguous repeated structures” in [PLANS.md](PLANS.md).
+- **Timestamp:** `27-10-26 02:30:17 IST`
+- **Decision:** Geometry-initialized fixed-camera Gaussian splatting, with a versioned refined-VGGT manifest and shared rendering/viewing; code authoring only on this machine.
+- **Reference:** “Geometry-initialized Gaussian splatting” in [PLANS.md](PLANS.md).
 
 ## Current Progress
+
+### Gaussian splatting — authored, not executed
+
+- **Recorded `27-10-26 02:46:18 IST`:** Added `src/splatting`, `src/rendering`,
+  `configs/gaussian_splatting.toml`, an example scene manifest, root training/rendering/
+  viewing scripts, CLI entry points, optional dependency groups and stage exports.
+- The input contract requires aligned RGB, decoded VGGT camera-head world-to-camera
+  extrinsics/intrinsics, refined camera-Z depth and world-space point maps. It
+  records source frame IDs/timestamps, image transforms, scale and optional masks/
+  confidence. Shapes, camera transforms and own-camera depth/reprojection agreement
+  are checked explicitly. Paths support per-frame NPY and named/indexed NPZ arrays.
+- Training-only bounded point sampling, multiview depth support, voxel fusion,
+  outlier removal and nearest-neighbor scales seed fixed-camera RGB/SSIM/depth
+  optimization. Budgeted adaptive refinement retains optimizer alignment. Checkpoints
+  save parameters, optimizer/refinement/RNG state, input fingerprints and versions.
+- Export includes standard full-SH Gaussian PLY, metadata, numeric metrics and
+  reference/render previews. The shared renderer produces RGB/alpha/camera-Z depth;
+  the server-side Python/Viser viewer uses it for view-dependent appearance.
+  The integer-centre VGGT to half-integer gsplat raster convention is converted
+  explicitly at the rendering boundary.
+- Tests are written for file/camera contracts, geometry filtering, holdout exclusion,
+  budgets, SH PLY and Adam checkpoint continuation, NaN-safe losses, topology state,
+  real CUDA training/rendering and raster pixel-centre alignment. **All are not run.**
+  No fake renderer or substitute model was used.
+- [SPLATTING.md](SPLATTING.md) documents the exact contract, API, server commands,
+  outputs, limitations and verification steps. `uv.lock` is unchanged because
+  dependency resolution must be performed on the development server.
+
+### Preprocessing — previous verified results
 
 - **Recorded `21-10-26 03:09:09 IST`:** Round-three corrections are implemented and both
   full captures rerun. See [review results and every accepted pair](PREPROCESSING_REVIEW.md)
@@ -99,6 +132,11 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 
 ## Blockers
 
+- The development server and actual refined VGGT files are inaccessible. Dependency
+  resolution/CUDA compilation, lint/tests, actual file integration, viewer operation,
+  memory/performance and real-capture splat quality remain unverified. No visual
+  inspection of splatting output has been performed. Resolve the lockfile on the
+  development server before using locked dependency workflows.
 - No execution or dependency blockers remain for the supplied SDR videos.
 - Per-frame blur classification is ambiguous for the labelled 49.5 s door at
   analysis resolution; the full pipeline uses context. Conservative self-similarity
@@ -107,7 +145,11 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 
 ## Next Actions
 
-1. User review of the four accepted match images and reported conservative rejections.
-2. Consider higher-resolution or richer blur evidence if a context-free decision is required.
-3. Integrate reconstruction through `load_result(output_dir)` and use global geometry
-   to evaluate tentative loop links. Preserve source and candidate provenance.
+1. On the development server, resolve splatting dependencies and run the documented
+   lint, CPU and real-CUDA tests; record failures and actual versions.
+2. Map the actual refined VGGT output layout to the documented manifest. Train a
+   representative capture, inspect held-out previews and the viewer, and record
+   quality/memory findings before declaring this stage verified.
+3. Retain preprocessing follow-ups: review accepted revisit images, consider richer
+   blur evidence if needed, and integrate reconstruction through `load_result(output_dir)`
+   while preserving source/candidate provenance.

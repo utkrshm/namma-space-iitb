@@ -1,0 +1,63 @@
+# All distances use the refined VGGT scene's units, not necessarily metres.
+[data]
+max_image_side = 1600
+cache_frames = 4
+holdout_every = 8 # 0 disables automatic holdout; explicit manifest splits take priority.
+confidence_min = 0.0 # In the producer's confidence units; VGGT scores are not probabilities.
+depth_min = 0.001
+depth_max = 1000000.0
+reprojection_px = 1.5
+depth_relative_tolerance = 0.05
+consistency_views = 4
+min_consistent_views = 1 # Require support from at least one OTHER training camera.
+max_geometry_rejection = 0.5
+
+[initialization]
+points_per_frame = 20000
+max_points = 300000
+candidate_multiplier = 3
+voxel_fraction = 0.001 # Relative to a robust scene radius; coordinates are not normalized.
+neighbor_distance_factor = 10.0
+scale_multiplier = 0.7
+min_scale_fraction = 0.00001
+max_scale_fraction = 0.02
+opacity = 0.1
+
+[training]
+steps = 30000
+seed = 42
+sh_degree = 3
+sh_interval = 1000
+ssim_weight = 0.2
+depth_weight = 0.2
+depth_weight_final = 0.02
+scale_regularization = 0.001
+means_lr = 0.00016 # Position learning rates are multiplied by the scene radius.
+means_lr_final = 0.0000016
+scales_lr = 0.005
+quats_lr = 0.001
+opacities_lr = 0.05
+sh0_lr = 0.0025
+shn_lr = 0.000125
+checkpoint_every = 2000
+evaluate_every = 2000
+log_every = 100
+
+[refinement]
+start_step = 500
+stop_step = 15000
+every = 100
+reset_every = 3000
+max_gaussians = 1000000
+grow_gradient = 0.0008
+grow_scale_fraction = 0.01
+prune_opacity = 0.005
+prune_scale_fraction = 0.1
+absgrad = true
+
+[render]
+near_plane = 0.001
+far_plane = 1000000.0
+background = [0.0, 0.0, 0.0]
+packed = true
+rasterize_mode = "classic"

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "camera_convention": "opencv_world_to_camera",
+  "depth_convention": "camera_z",
+  "point_convention": "world",
+  "camera_model": "pinhole",
+  "pixel_convention": "integer_centers",
+  "scene_units": "arbitrary",
+  "frames": [
+    {
+      "frame_id": "capture:0",
+      "timestamp_s": 0.0,
+      "width": 640,
+      "height": 480,
+      "image": "images/00000.png",
+      "intrinsics": {"path": "cameras.npz", "key": "intrinsics", "index": 0},
+      "world_to_camera": {"path": "cameras.npz", "key": "extrinsics", "index": 0},
+      "depth": "depth/00000.npy",
+      "points": "points/00000.npy",
+      "source_to_image": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+      "split": "train"
+    },
+    {
+      "frame_id": "capture:100",
+      "timestamp_s": 0.1,
+      "width": 640,
+      "height": 480,
+      "image": "images/00001.png",
+      "intrinsics": {"path": "cameras.npz", "key": "intrinsics", "index": 1},
+      "world_to_camera": {"path": "cameras.npz", "key": "extrinsics", "index": 1},
+      "depth": "depth/00001.npy",
+      "points": "points/00001.npy",
+      "source_to_image": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+      "split": "train"
+    },
+    {
+      "frame_id": "capture:200",
+      "timestamp_s": 0.2,
+      "width": 640,
+      "height": 480,
+      "image": "images/00002.png",
+      "intrinsics": {"path": "cameras.npz", "key": "intrinsics", "index": 2},
+      "world_to_camera": {"path": "cameras.npz", "key": "extrinsics", "index": 2},
+      "depth": "depth/00002.npy",
+      "points": "points/00002.npy",
+      "source_to_image": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+      "split": "val"
+    }
+  ]
+}

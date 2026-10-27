@@ -20,8 +20,21 @@ packages = ["src"]
 
 [project.scripts]
 namma-preprocess = "src.preprocessing.cli:main"
+namma-splat = "src.splatting.cli:main"
+namma-render-splat = "src.rendering.cli:main"
+namma-view-splat = "src.splatting.viewer:main"
 
 [project.optional-dependencies]
+splatting = [
+    "gsplat==1.5.3",
+    "torch>=2.4,<3",
+    "scipy>=1.14,<2",
+    "plyfile>=1.1,<2",
+]
+splatting-viewer = [
+    "namma-space-iitb[splatting]",
+    "viser>=1.0,<2",
+]
 revisits = [
     "lightglue",
     "torch>=2.14.1",
@@ -31,6 +44,7 @@ revisits = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["cuda: real gsplat rendering/training tests requiring CUDA on the development server"]
 
 [tool.ruff]
 line-length = 100
