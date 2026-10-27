@@ -301,6 +301,25 @@ schema. A frame's points are `camera_to_world · (depth_scale · owner depth)`. 
 are compared on identical correspondences in `comparison.json`. See
 [LOOP_CLOSURE.md](LOOP_CLOSURE.md).
 
+### Dense full-resolution SfM (`src/sfm/`)
+
+The VGGT stages solve 161 geometry frames at 518 px. Photoreal splatting needs many more
+views with sub-pixel cameras at full resolution, so this stage solves its own cameras:
+
+- **Input:** a preprocessing output directory (scores for every video frame, clip
+  metadata) and the source video. A loop-closure `cameras.npz` is optional: it seeds the
+  focal length and is used afterwards as an independent check.
+- **Processing:** the sharpest unflagged frame in every 0.25 s window, plus all geometry
+  frames, exported upright at full resolution with their `<clip_id>:<pts>` IDs. ALIKED
+  features at 1600 px feed LightGlue on sequential pairs (±8 frames). DINOv2 retrieval
+  pairs more than 4 s apart are kept only with ≥60 non-planar epipolar inliers. COLMAP
+  verification, then the pycolmap global mapper (GLOMAP), with one shared
+  SIMPLE_RADIAL camera. The result is undistorted to PINHOLE.
+- **Output:** `frames.json`, `images/`, `sparse/<k>/`, and `undistorted/{images,sparse}`
+  (the splatting hand-off). Also `report.json` (registration, reprojection error and VGGT
+  comparison after a Sim(3)) and `inspection/topdown.png`. Contract details are in
+  `src/sfm/contracts.py`.
+
 ## 4. Geometric reconstruction
 
 Reconstruction combines the estimated observations into a coherent scene representation. It aligns and fuses points, removes inconsistent observations, estimates surfaces and generates geometry suitable for downstream use. The visual representation and the geometry used for spatial reasoning serve different purposes.
@@ -328,6 +347,14 @@ The root scripts `train_gaussian_splat.py`, `render_gaussian_splat.py` and
 All execution targets the development server. No reconstruction or visual-quality
 verification has been performed for this stage yet. The exact schema, commands,
 configuration and verification procedure are in [SPLATTING.md](SPLATTING.md).
+
+A second trainer, `src/splatting/sfm_training.py` (`train_sfm_splat.py`), consumes the
+`src/sfm` hand-off: undistorted PINHOLE images, COLMAP poses and sparse points. It seeds
+Gaussians at SfM points and densifies with gsplat's MCMC strategy. It also learns a
+per-image pose increment and a per-image affine colour transform. The colour transforms
+are kept zero-mean, so the canonical colours equal the average exposure. It writes the
+same `scene.ply` + sidecar and a `cameras.json` (refined training poses), so the shared
+renderer and viewer work unchanged.
 
 ### Scene geometry: mesh / TSDF
 

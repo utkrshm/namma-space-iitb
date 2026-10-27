@@ -14,6 +14,45 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 27-10-26 15:28:36 IST — Dense full-resolution SfM cameras and quality-focused splat training
+
+- **Status:** Adopted (on `feat/dense-sfm-splat`, which merges `feat/LoopClosure` and the
+  committed `origin/feat/splatting`).
+- **Decision:** Add `src/sfm/`. It selects ~4 sharp frames per second from the source
+  video (always including the 161 geometry frames) and exports them at full 1080×1920
+  resolution. It matches them with ALIKED/LightGlue on sequential pairs and on verified
+  DINOv2 retrieval pairs, then solves one shared camera with pycolmap (global mapper,
+  incremental mapper as an alternative) and undistorts to a pinhole COLMAP model.
+  Add a COLMAP-input trainer to `src/splatting` (new modules only). It uses gsplat MCMC
+  densification, per-image camera refinement, per-image colour (exposure/white-balance)
+  compensation and progressive resolution. It writes the existing PLY/checkpoint
+  layout, so `view_gaussian_splat.py` and `render_gaussian_splat.py` keep working.
+- **Rationale and trade-offs:** The existing Coorg splat (161 VGGT views at 294×518) scores
+  30.6 dB on training views but 17.0 dB / SSIM 0.59 on held-out views, and its held-out
+  renders are smeared and offset. That gap points to too few views (0.75 per second) and
+  VGGT cameras that are only accurate to about one 518-grid pixel (≈4 px at full
+  resolution), not to the trainer. Dense video frames give the overlap that SfM and 3DGS
+  need. Learned features on dense sequential pairs avoid the failure of the earlier
+  SIFT/exhaustive COLMAP test on 36 sparse room views. VGGT cameras stay the independent
+  check: SfM cameras on the shared geometry frames are compared with them after a Sim(3).
+  Phone video has auto-exposure, so per-image colour compensation stops exposure changes
+  from turning into floaters. Camera refinement absorbs remaining sub-pixel pose error.
+  The new trainer does not edit utkarsh's in-progress `src/splatting` files; it adds
+  modules beside them.
+- **Affected components:** new `src/sfm/`; new `src/splatting/sfm_*` modules; root scripts
+  `build_sfm.py` and `train_sfm_splat.py`; `sfm` extra (`pycolmap`); tests; SFM/SPLATTING/
+  ARCHITECTURE/STATE docs.
+- **Implementation steps:**
+  1. Select and export frames, extract features, match pairs, map, undistort.
+  2. Write a report and inspection plots, and compare with VGGT cameras on shared frames.
+  3. Train with held-out views that are exactly utkarsh's 20 validation frames, for a
+     like-for-like comparison.
+  4. Inspect renders visually.
+  5. Iterate on the dominant error, e.g. a depth prior for plain walls, or more frames.
+- **Completion criteria:** Most frames are registered in one model with sub-pixel reprojection
+  error. Held-out PSNR/SSIM on the shared validation frames is clearly above 17.0 dB /
+  0.59. Held-out renders and novel views are inspected visually. Tests on real data pass.
+
 ## 26-10-26 19:11:38 IST — Loop closure for global camera drift (two compared methods)
 
 - **Status:** Adopted for implementation on `feat/LoopClosure` (based on `fix/recon-section-alignment`).

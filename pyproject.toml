@@ -22,7 +22,9 @@ packages = ["src"]
 namma-preprocess = "src.preprocessing.cli:main"
 namma-reconstruct = "src.reconstruction.cli:main"
 namma-loop-closure = "src.loop_closure.cli:main"
+namma-sfm = "src.sfm.cli:main"
 namma-splat = "src.splatting.cli:main"
+namma-sfm-splat = "src.splatting.sfm_cli:main"
 namma-render-splat = "src.rendering.cli:main"
 namma-view-splat = "src.splatting.viewer:main"
 
@@ -54,6 +56,14 @@ reconstruction = [
 ]
 viewer = [
     "open3d>=0.19",
+]
+sfm = [
+    "pycolmap>=3.12",
+    "lightglue",
+    "torch>=2.14.1",
+    "torchvision>=0.29.1",
+    "transformers>=5.20.2",
+    "scipy>=1.14",
 ]
 revisits = [
     "lightglue",

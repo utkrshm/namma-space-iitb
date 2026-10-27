@@ -38,14 +38,17 @@ from .reconstruction import (
     unproject_depth,
 )
 from .rendering import render_cameras, render_gaussians
+from .sfm import SfmConfig, run_sfm
 from .splatting import (
     Camera,
     RefinedScene,
+    SfmSplatConfig,
     SplattingConfig,
     SplattingResult,
     export_ply,
     load_model,
     load_scene,
+    train_sfm_splat,
     train_splat,
     view_splat,
 )
@@ -65,6 +68,8 @@ __all__ = [
     "RefinedScene",
     "SectionEdge",
     "SectionSpec",
+    "SfmConfig",
+    "SfmSplatConfig",
     "Sim3",
     "SplattingConfig",
     "SplattingResult",
@@ -93,10 +98,12 @@ __all__ = [
     "run_loop_closure",
     "run_section_alignment",
     "run_section_inference",
+    "run_sfm",
     "save_point_cloud",
     "segment_floor_images",
     "show_point_cloud",
     "to_open3d",
+    "train_sfm_splat",
     "train_splat",
     "transform_observations",
     "unproject_depth",
