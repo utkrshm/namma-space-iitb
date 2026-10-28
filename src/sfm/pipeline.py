@@ -18,7 +18,7 @@ from .evaluation import (
     trajectory_continuity,
 )
 from .frames import export_frames
-from .loops import consistent_loops
+from .loops import consistent_loops, loop_consistency
 from .mapping import build_database, initial_camera_params, run_mapper, undistort
 from .matching import build_pairs, extract_features, global_descriptors, load_features, match_pairs
 
@@ -109,6 +109,7 @@ def run_sfm(
         if vggt_cameras is not None and vggt_cameras.exists()
         else None
     )
+    consistency = loop_consistency(model, frames, matches, listing, features)
     retrieval = [p for p in listing if p["kind"] == "retrieval"]
     report = {
         "config": asdict(config),
@@ -120,6 +121,8 @@ def run_sfm(
             "matched": len(matches),
         },
         "loop_check": loop_check,
+        # Epipolar fit of the loop pairs that entered mapping; ~1 px means closed loops.
+        "loop_consistency": consistency,
         "models": [m.num_reg_images() for m in models],
         "continuity": trajectory_continuity(poses, frames),
         "largest_model": model_report(model, frames),

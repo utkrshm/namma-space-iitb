@@ -50,9 +50,10 @@ def diagnose(
         rgb, _, _, _ = render(model, world_to_camera, k, width, height, degree, "classic")
         rgb = corrections.apply_colour(index, rgb).clamp(0, 1)
         psnr = float(-10 * torch.log10((rgb - target).square().mean().clamp_min(1e-12)))
-        rows.append((float(scene.timestamps[index]), psnr))
+        rows.append((float(scene.timestamps[index]), psnr, index))
 
-    times, psnrs = np.array(rows).T
+    times, psnrs, indices = np.array(rows).T
+    worst = np.argsort(psnrs)[:15]
     segments = []
     for start in np.arange(0, times.max() + segment_s, segment_s):
         inside = (times >= start) & (times < start + segment_s)
@@ -72,6 +73,15 @@ def diagnose(
         "gaussians": model.count,
         "psnr_mean": float(psnrs.mean()),
         "segments": segments,
+        "worst_frames": [
+            {
+                "frame_id": scene.frame_ids[int(indices[k])],
+                "timestamp_s": float(times[k]),
+                "psnr": float(psnrs[k]),
+                "image": str(scene.image_paths[int(indices[k])]),
+            }
+            for k in worst
+        ],
         "extent_quantiles": dict(
             zip(("q50", "q90", "q99", "q999"), extent.quantile(quantiles).tolist())
         ),
@@ -92,6 +102,8 @@ def main(argv=None) -> int:
         args.checkpoint, args.sfm_dir, downscale=args.downscale, stride=args.stride,
         device=args.device,
     )  # fmt: skip
+    for frame in report.pop("worst_frames"):
+        print(f"worst {frame['timestamp_s']:7.2f}s psnr={frame['psnr']:5.1f} {frame['image']}")
     for segment in report.pop("segments"):
         print(
             f"{segment['start_s']:6.0f}s  views={segment['views']:3d}  "

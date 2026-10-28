@@ -65,6 +65,9 @@ class SfmRefinementConfig:
     min_opacity: float = 0.005
     # Largest Gaussian extent as a fraction of the scene extent (clamped).
     max_scale_fraction: float = 0.1
+    # Gaussians whose screen radius exceeds this fraction of the image side are relocated
+    # on refinement steps (3DGS screen-size pruning); 0 disables.
+    max_screen_fraction: float = 0.15
 
 
 @dataclass(frozen=True)

@@ -417,6 +417,7 @@ def train_sfm_splat(
                 colour[train_tensor] -= colour[train_tensor].mean(0)
         colour_optimizer.zero_grad(set_to_none=True)
         _limit_scales(model, refinement, extent)
+        _prune_screen_size(model, refinement, info, step, max(width, height))
         strategy.step_post_backward(
             model.params,
             optimizers,
@@ -520,6 +521,29 @@ def _limit_scales(model, refinement, extent: float) -> None:
     limit = math.log(refinement.max_scale_fraction * extent)
     scales = model.params["scales"]
     scales.clamp_(max=limit)
+
+
+@torch.no_grad()
+def _prune_screen_size(model, refinement, info: dict, step: int, image_side: int) -> None:
+    """Hand Gaussians that cover a large part of the image to MCMC relocation.
+
+    The original 3DGS prunes Gaussians with large screen-space radii. Without it, Gaussians
+    just in front of a camera grow over thousands of tiles: on Coorg, full-resolution runs
+    filled with near-camera floaters and ran out of GPU memory in tile intersection.
+    Only done on refinement steps, so MCMC relocates the marked Gaussians immediately.
+    """
+    fraction = refinement.max_screen_fraction
+    refining = refinement.start_step <= step < refinement.stop_step
+    if fraction <= 0 or not refining or step % refinement.every:
+        return
+    radii = info["radii"]
+    if radii.dim() == 3:  # [C, N, 2] in newer gsplat
+        radii = radii.max(dim=-1).values
+    # Never below 64 px, so small images keep their legitimately large Gaussians.
+    oversize = radii.max(dim=0).values > max(fraction * image_side, 64)
+    if oversize.any():
+        dead = math.log(refinement.min_opacity / 2 / (1 - refinement.min_opacity / 2))
+        model.params["opacities"][oversize] = dead
 
 
 def _save(output: Path, model, corrections, step: int, metadata: dict) -> None:

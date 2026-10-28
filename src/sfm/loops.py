@@ -97,3 +97,49 @@ def consistent_loops(
             kept[(i, j)] = pair_matches
         report.append(record)
     return kept, report
+
+
+def loop_consistency(model, frames, matches, listing, features, segment_s: float = 20.0) -> dict:
+    """Epipolar error of every retrieval pair under a solved model, overall and by time.
+
+    True loops should fit a well-closed model to about a pixel; a stretch with large
+    errors is a stretch whose revisits disagree, which shows up as blur or doubled
+    surfaces in a splat.
+    """
+    from .evaluation import camera_poses
+
+    poses = camera_poses(model, frames)
+    focal, cx, cy = next(iter(model.cameras.values())).params[:3]
+    intrinsics = np.array([[focal, 0, cx - 0.5], [0, focal, cy - 0.5], [0, 0, 1.0]])
+    kinds = {(p["i"], p["j"]): p["kind"] for p in listing}
+    rows = []
+    for (i, j), pair_matches in matches.items():
+        a, b = frames[i]["frame_id"], frames[j]["frame_id"]
+        if kinds[(i, j)] != "retrieval" or a not in poses or b not in poses:
+            continue
+        xy_a = features[i]["keypoints"][pair_matches[:, 0]].astype(np.float64)
+        xy_b = features[j]["keypoints"][pair_matches[:, 1]].astype(np.float64)
+        error = sampson_px(xy_a, xy_b, poses[a], poses[b], intrinsics)
+        rows.append((frames[i]["timestamp_s"], error))
+    if not rows:
+        return {"pairs": 0}
+    times, errors = np.array(rows).T
+    segments = []
+    for start in np.arange(0, times.max() + segment_s, segment_s):
+        inside = (times >= start) & (times < start + segment_s)
+        if inside.any():
+            segments.append(
+                {
+                    "start_s": float(start),
+                    "pairs": int(inside.sum()),
+                    "median_px": float(np.median(errors[inside])),
+                    "over_3px": float(np.mean(errors[inside] > 3)),
+                }
+            )
+    return {
+        "pairs": len(errors),
+        "median_px": float(np.median(errors)),
+        "p90_px": float(np.percentile(errors, 90)),
+        "over_3px": float(np.mean(errors > 3)),
+        "segments": segments,
+    }
