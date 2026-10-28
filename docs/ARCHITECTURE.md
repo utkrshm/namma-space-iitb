@@ -356,6 +356,12 @@ are kept zero-mean, so the canonical colours equal the average exposure. It writ
 same `scene.ply` + sidecar and a `cameras.json` (refined training poses), so the shared
 renderer and viewer work unchanged.
 
+Large captures are trained as time blocks of one SfM model (`time_range_s`, global
+holdout). `merge_blocks` gives each Gaussian to the block whose cameras observe its
+position best (Σ 1/depth²). A short joint fine-tune (`--initial-ply`, no densification)
+then removes cross-block floaters. `web_export` prunes near-transparent Gaussians and writes
+a 32-byte-per-Gaussian `.splat`; `flythrough` renders a smoothed trajectory video.
+
 ### Scene geometry: mesh / TSDF
 
 Explicit geometry represents surfaces and spatial boundaries for collision checking and navigation. A mesh describes surfaces with vertices and faces. A truncated signed distance field (TSDF) stores distances near observed surfaces and can support fusion and mesh extraction. This representation supplies geometric information that a photorealistic rendering alone does not establish.

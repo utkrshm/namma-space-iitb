@@ -275,11 +275,14 @@ def train_sfm_splat(
     *,
     device: str = "cuda:0",
     resume: bool = False,
+    initial_ply: str | Path | None = None,
 ) -> dict:
     """Train one splat; returns the final metrics (also written to ``metrics.json``).
 
     ``resume`` continues from ``checkpoint.pt`` in ``output_dir``: Gaussians, camera and
     colour corrections and the step are restored; Adam moments restart from zero.
+    ``initial_ply`` starts from an existing Gaussian PLY instead of SfM points (e.g. to
+    jointly fine-tune merged blocks); its SH degree must match ``training.sh_degree``.
     """
     from gsplat.strategy import MCMCStrategy
 
@@ -303,7 +306,14 @@ def train_sfm_splat(
     images = ImageCache(scene, levels)
     radius = scene_scale(scene)
     extent = scene_extent(scene)
-    model = initial_model(scene, config, device)
+    if initial_ply is not None:
+        from .storage import load_ply
+
+        model = load_ply(initial_ply, device)[0]
+        if model.sh_degree != config.training.sh_degree:
+            raise ValueError("initial_ply SH degree differs from training.sh_degree")
+    else:
+        model = initial_model(scene, config, device)
     corrections = CameraCorrections(len(scene.cameras)).to(device)
     first_step = 0
     if resume:

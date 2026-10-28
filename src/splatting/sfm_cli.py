@@ -17,6 +17,7 @@ def main(argv=None) -> int:
     parser.add_argument("--max-gaussians", type=int)
     parser.add_argument("--downscale", type=int)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--initial-ply", type=Path, help="Start from this Gaussian PLY")
     parser.add_argument(
         "--resume", action="store_true", help="Continue from <output>/checkpoint.pt"
     )
@@ -33,7 +34,12 @@ def main(argv=None) -> int:
     if args.downscale is not None:
         config = replace(config, data=replace(config.data, downscale=args.downscale))
     metrics = train_sfm_splat(
-        args.sfm_dir, args.output, config, device=args.device, resume=args.resume
+        args.sfm_dir,
+        args.output,
+        config,
+        device=args.device,
+        resume=args.resume,
+        initial_ply=args.initial_ply,
     )
     print(json.dumps({k: metrics[k] for k in ("gaussians", "train", "val")}, indent=1))
     print(f"PLY: {args.output / 'scene.ply'}; cameras: {args.output / 'cameras.json'}")

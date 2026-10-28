@@ -9,6 +9,118 @@ without installing dependencies or executing project code on the authoring machi
 Runtime compatibility, integration with the remote VGGT files and visual quality
 remain unverified.
 
+## Splatting from dense SfM cameras (`train_sfm_splat.py`) — verified on Coorg
+
+The recommended path for photoreal output. It uses the full-resolution cameras of
+[`src/sfm`](SFM.md) instead of the 161 VGGT views at 294×518. The trainer is
+`src/splatting/sfm_training.py`; it writes the same `scene.ply` + sidecar as the trainer
+below, so `view_gaussian_splat.py` and `render_gaussian_splat.py` work unchanged.
+
+```sh
+export TORCH_EXTENSIONS_DIR=$HOME/.cache/torch_extensions_namma
+export CUDA_HOME=$PWD/outputs/runtime/cuda-12.1 TORCH_CUDA_ARCH_LIST=8.6
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+# One model for the whole capture.
+uv run --no-sync python train_sfm_splat.py outputs/coorg_bnb/sfm_loops2 \
+  --config configs/coorg_sfm_splat_v6b.toml --output outputs/coorg_bnb/splat_runs/full
+
+# Or blocks of one SfM model, merged by nearest-camera ownership.
+for b in A_entrance B_living C_dining; do
+  uv run --no-sync python train_sfm_splat.py outputs/coorg_bnb/sfm_loops2 \
+    --config configs/coorg_blocks/$b.toml --output outputs/coorg_bnb/splat_runs/blocks/$b
+done
+uv run --no-sync python merge_splat_blocks.py outputs/coorg_bnb/sfm_loops2 \
+  outputs/coorg_bnb/splat_runs/blocks/{A_entrance,B_living,C_dining} \
+  --output-dir outputs/coorg_bnb/splat_runs/blocks/merged
+
+# Diagnose where a splat fails (per 10 s of video, worst frames, Gaussian statistics).
+uv run --no-sync python diagnose_splat.py <run>/checkpoint.pt outputs/coorg_bnb/sfm_loops2
+# Web export: drop Gaussians below 0.02 opacity; writes scene.splat and scene_pruned.ply.
+uv run --no-sync python export_web_splat.py <run>/scene.ply --output-dir <run>/web \
+  --sfm-dir outputs/coorg_bnb/sfm_loops2
+```
+
+Start GPU jobs at least a minute apart. Two processes that compile gsplat's CUDA
+extension at the same moment corrupt ninja's dependency log, and every later process
+then fails with `Error building extension 'gsplat_cuda'`. In that case, point
+`TORCH_EXTENSIONS_DIR` at a fresh directory.
+
+### What the trainer does
+
+- **Seeds:** SfM points. Each starting Gaussian's scale is the mean distance to its
+  3 nearest neighbours.
+- **Densification:** gsplat's MCMC strategy, with opacity and scale regularization. MCMC's
+  position noise is `lr × covariance`, which has units of length³, and gsplat assumes a
+  world of radius ≈ 1. The trainer divides the noise learning rate by the scene radius
+  squared; otherwise it is about 40–120× too strong on an unnormalized scene.
+- **Size limits:**
+  - Gaussian extents are clamped to 10% of the scene extent.
+  - On refinement steps, Gaussians whose screen radius exceeds 15% of the image (and
+    64 px) are handed to MCMC relocation. This is 3DGS's screen-size pruning; it stops
+    near-camera floaters.
+- **Per-image corrections:**
+  - A pose increment (6D rotation + translation, lr 1e-5) for each image.
+  - An affine colour transform for each image, for exposure and white balance. The
+    transforms are kept zero-mean, so the canonical colours that viewers render equal the
+    average exposure.
+- **Schedule:** coarse-to-fine resolution (×4 → ×2 → ×1 at steps 0/2000/6000), 30k steps.
+- **Held-out views:** every 8th geometry frame of the whole capture, the same 20 frames
+  as the VGGT trainer below, even inside a `time_range_s` block. Each view is reported
+  three ways: raw PSNR, colour-fitted PSNR (`psnr_cc_db`), and PSNR on the 518 grid.
+- **Resuming:** `--resume` continues from `checkpoint.pt` (Adam moments restart).
+
+### Coorg findings (28 Oct 2026, A4000)
+
+Held-out frames are utkarsh's 20 validation frames. The table's PSNR columns are on the
+518 grid, the grid the VGGT splat was evaluated on.
+
+| Model | Raw PSNR | Colour-corrected PSNR | SSIM |
+| --- | ---: | ---: | ---: |
+| VGGT splat (`section_alignment_60k`, 161 views at 294×518) | 17.07 | – | 0.59 |
+| SfM splat, quarter resolution, 5k steps (cameras: sequential or loops) | 21.8–22.1 | 24.6–25.0 | 0.84–0.85 |
+| SfM splat, full house, full resolution, 1.6M Gaussians (`full_loops_v2`) | 19.3 | 22.4 | 0.80 |
+| + loop-gated cameras and screen-size pruning (`full_loops2_v6b`) | 19.5 | 22.3 | 0.80 |
+| Blocks merged by nearest camera | – | 20.6* | – |
+| Blocks merged by visibility (`blocks/merged_vis`) | – | 24.4* | – |
+| **Blocks merged by visibility + 6k-step joint fine-tune (`blocks/merged_finetune`)** | **24.6** | **28.3** | **0.91** |
+
+\* Colour-corrected PSNR at half resolution (v6b scores 21.8 on that measure).
+
+The final model is `outputs/coorg_bnb/splat_runs/blocks/merged_finetune`. At full
+resolution it scores 23.9 dB raw / 27.0 dB colour-corrected, SSIM 0.91. It has 4.04M
+Gaussians; the web export keeps those with opacity ≥ 0.02. The blocks are entrance
+0–74.5 s, living room 74.5–180 s and dining 180–216 s (`configs/coorg_blocks/`); each
+block alone scores 25.8–29.3 dB colour-corrected on its own held-out frames.
+
+The table covers the same 20 held-out frames for every model. The remaining weak views
+are a floater at the left edge of the 50 s door view and a soft shelf at 200 s. These
+two views (113 s and 200 s) score about the same as or below the VGGT splat; the other
+18 are far better (`outputs/coorg_bnb/final/heldout_*.jpg`).
+
+Lessons from the failed runs:
+
+- **Loop closure is required.** Sequential-only cameras misalign every return to the
+  living room. At full resolution that collapses the fit (train PSNR 17 → 13 dB).
+- **MCMC noise must be normalized.** See *What the trainer does* above; without it,
+  Gaussians grew to a median of 2.2 units (in a ≈10-unit house) at 2% opacity.
+- **Budgets above about 1.6M were unstable for the whole house** (2.5M and 4M runs). They
+  filled with near-camera fog: depth ≈ 0.11 units in front of every camera, Gaussians at
+  the size cap with opacity ≈ 0.005. Memory then blew up in tile intersection.
+- **One model for the whole house is capacity-limited.** The 74.5–180 s block alone
+  reached 21.2 dB raw / 27.8 dB colour-corrected on its 9 held-out views; that motivated
+  block training.
+- **Merge by visibility, then fine-tune jointly.** A walk passes through rooms in several
+  time windows. Nearest-camera ownership therefore gave rooms to blocks that only walked
+  past them (20.6 dB). Ownership by Σ 1/depth² over each block's cameras fixed that
+  (24.4 dB). A short joint fine-tune without densification removed the floaters that
+  one block left in another's views.
+- **Fly-through video:** `render_flythrough.py <scene.ply> <sfm_dir> --output x.mp4`
+  follows the capture path, with smoothed centres and slerped rotations.
+- **Pruning is free.** Removing Gaussians below 0.02 opacity drops 69% of them with no
+  held-out change. The view-independent `.splat` costs about 2.6 dB against the full-SH
+  PLY.
+
 ## Preparing the development server
 
 Use Python 3.11 or later, a CUDA-capable NVIDIA GPU, and compatible PyTorch,

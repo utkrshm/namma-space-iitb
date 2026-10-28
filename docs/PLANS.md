@@ -49,6 +49,15 @@ Record substantive decisions and their implementation steps here before executio
      like-for-like comparison.
   4. Inspect renders visually.
   5. Iterate on the dominant error, e.g. a depth prior for plain walls, or more frames.
+- **Amendments (28-10-26):** Retrieval loops are checked against a sequential-only
+  trajectory (rotation), then against the loop-closed model (epipolar fit). The whole
+  house is trained as three time blocks, merged by visibility-weighted ownership and
+  jointly fine-tuned, because a single model was capacity-limited and became unstable
+  with larger budgets. MCMC noise is scale-normalized; screen-size pruning was added.
+- **Completed `28-10-26 21:13:39 IST`:** 927/927 frames registered. The final splat scores
+  23.9 dB raw / 27.0 dB colour-corrected, SSIM 0.91, on the shared held-out frames
+  (VGGT splat: 17.07 dB / SSIM 0.59 at 518). Details are in STATE.md, SFM.md and
+  SPLATTING.md.
 - **Completion criteria:** Most frames are registered in one model with sub-pixel reprojection
   error. Held-out PSNR/SSIM on the shared validation frames is clearly above 17.0 dB /
   0.59. Held-out renders and novel views are inspected visually. Tests on real data pass.

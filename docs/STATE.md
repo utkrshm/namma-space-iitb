@@ -2,10 +2,19 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `26-10-26 20:25:16 IST`
+**Last updated:** `28-10-26 21:13:39 IST`
 
 ## Current Focus
 
+Work is on `feat/dense-sfm-splat`. It adds full-resolution cameras (`src/sfm/`, see
+[SFM.md](SFM.md)) and photoreal Gaussian splatting of the whole Coorg house
+(`train_sfm_splat.py` → block training → visibility merge → joint fine-tune; see
+[SPLATTING.md](SPLATTING.md#splatting-from-dense-sfm-cameras-train_sfm_splatpy--verified-on-coorg)).
+Final model: `outputs/coorg_bnb/splat_runs/blocks/merged_finetune`. On the 20 held-out
+frames it scores 23.9 dB raw / 27.0 dB colour-corrected, SSIM 0.91; at the 518 grid it
+scores 24.6 dB raw, against 17.07 dB for the earlier VGGT splat.
+
+Earlier focus (`feat/LoopClosure`):
 Work is on `feat/LoopClosure` (from `fix/recon-section-alignment`): loop closure for the
 global camera drift seen in the Coorg section-aligned cloud. Two methods are compared,
 VGGT-Long-style loop chunks (A) and bundle adjustment (B), plus an optional square-walls
@@ -36,7 +45,8 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 | Loop closure (`src/loop_closure/`) | Implemented and run on real Coorg outputs; B gives a measurable gain (sequential −35%, held-out loops −10%); dining-wing drift and wall layering remain (no verifiable dining loop in this capture) |
 | Gaussian splatting (`src/splatting`) | Implemented (awaiting verification on development server) |
 | Shared rendering and Python/Viser viewer | Implemented (awaiting verification on development server) |
-| Dense SfM and high-quality splatting (`src/sfm/`) | In progress on `feat/dense-sfm-splat` |
+| Dense full-resolution SfM (`src/sfm/`) | Verified on Coorg: 927/927 frames, 1.31 px, loops checked by rotation and epipolar fit |
+| SfM-input splatting, block merge, web export, fly-through (`src/splatting/sfm_*`, `merge_blocks`, `web_export`, `flythrough`) | Verified on Coorg: held-out 23.9/27.0 dB, SSIM 0.91; visually inspected |
 | Surface reconstruction, scene understanding and navigation | Planned |
 
 ## Latest Decision
@@ -52,6 +62,43 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 - **Reference:** “Depth-scaled fitting and independent interior handoff validation” in [PLANS.md](PLANS.md).
 
 ## Current Progress
+
+### Dense SfM and photoreal splatting on Coorg (`feat/dense-sfm-splat`)
+
+- **Recorded `28-10-26 21:13:39 IST`:** 927 frames (4 per second plus the 161 geometry frames) were
+  solved at 1080×1920.
+  - GLOMAP with every retrieval pair folded the trajectory: false loops on repeated
+    grilles and doors, 10–20% of the pairs, with 100–180° rotation error.
+  - A three-pass solve fixed it: sequential → loops checked by rotation → loops checked
+    by epipolar fit. The last pass also removed translated-grille false loops at the
+    entrance.
+  - Final cameras (`sfm_loops2`): 1.31 px, 3 small trajectory breaks, true loops fit
+    to 0.97 px median.
+- **Splat training (`train_sfm_splat.py`):** MCMC, per-image pose and colour corrections,
+  coarse-to-fine resolution. Root causes found and fixed:
+  - MCMC noise was not scale-normalized (≈ radius² too strong), which caused fog.
+  - Gaussian sizes were unbounded; there was no screen-size pruning (near-camera
+    floaters, out-of-memory errors).
+  - Budgets above 1.6M were unstable for the whole house.
+  - The best single model (`full_loops2_v6b`) scores 19.05/21.6 dB, SSIM 0.80.
+- **Blocks:** entrance 0–74.5 s, living room 74.5–180 s, dining 180–216 s, each trained on
+  the same cameras with the global holdout (25.8–29.3 dB colour-corrected on their own
+  views).
+  - Nearest-camera merge: 20.6 dB. Visibility-weighted merge: 24.4 dB (colour-corrected,
+    at half resolution).
+  - A 6k-step joint fine-tune gives the final 23.9 / 27.0 dB, SSIM 0.91.
+- **Visual inspection:** `outputs/coorg_bnb/final/heldout_overview.jpg` (real frame |
+  VGGT splat | new splat) and `flythrough_frames.jpg` from
+  `outputs/coorg_bnb/final/coorg_flythrough.mp4` (1387 frames).
+  - Sharp: furniture, curtains, inlays, grilles.
+  - Remaining weak spots: a floater at the left edge of the 50 s door view, a soft shelf
+    at 200 s, and the blank-ceiling pan at 72–80 s. The 113 s and 200 s held-out views
+    are not better than the VGGT splat.
+- **Web export:** pruning at opacity < 0.02 leaves 2.08M Gaussians with no PSNR change.
+  The full-SH PLY is 491 MB; the 32-byte `.splat` is 63 MB (it loses view-dependent
+  colour, −3 dB).
+- **Checks:** `uv run --no-sync pytest tests -q`: 117 passed, 1 skipped, 1 xfailed (CUDA
+  tests ran on the A4000). Ruff passes on the changed files.
 
 ### Gaussian splatting — authored, not executed
 
