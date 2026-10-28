@@ -16,6 +16,8 @@ class SfmDataConfig:
     holdout_geometry_every: int = 8
     # Also drop training frames this close in time to a held-out frame (0 keeps them).
     holdout_exclusion_s: float = 0.0
+    # Optional [start, end] source-time window in seconds; empty trains on every frame.
+    time_range_s: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,9 @@ class SfmSplatConfig:
             allowed = {f.name for f in fields(section_type)}
             if set(value) - allowed:
                 raise ValueError(f"Unknown settings in [{name}]: {sorted(set(value) - allowed)}")
+            if "time_range_s" in value:
+                value = dict(value)
+                value["time_range_s"] = tuple(value["time_range_s"])
             if "resolution_schedule" in value:
                 value = dict(value)
                 value["resolution_schedule"] = tuple(map(tuple, value["resolution_schedule"]))

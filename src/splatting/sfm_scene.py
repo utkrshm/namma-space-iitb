@@ -34,18 +34,29 @@ class SfmScene:
 
 
 def load_sfm_scene(
-    sfm_dir: str | Path, holdout_geometry_every: int = 8, holdout_exclusion_s: float = 0.0
+    sfm_dir: str | Path,
+    holdout_geometry_every: int = 8,
+    holdout_exclusion_s: float = 0.0,
+    time_range_s: tuple[float, float] | None = None,
 ) -> SfmScene:
-    """Read ``<sfm_dir>/undistorted`` and ``frames.json``; images are ordered by time."""
+    """Read ``<sfm_dir>/undistorted`` and ``frames.json``; images are ordered by time.
+
+    ``time_range_s`` keeps only frames in that source-time window and the SfM points they
+    observe (e.g. one room, or a segment between mapping breaks).
+    """
     import pycolmap
 
     root = Path(sfm_dir).resolve()
     frames = {f["name"]: f for f in json.loads((root / "frames.json").read_text())}
     model = pycolmap.Reconstruction(root / "undistorted" / "sparse")
-    records = []
+    records, kept = [], set()
     for image in model.images.values():
         if not image.has_pose:
             continue
+        time = frames[image.name]["timestamp_s"]
+        if time_range_s is not None and not time_range_s[0] <= time <= time_range_s[1]:
+            continue
+        kept.add(image.image_id)
         camera = model.cameras[image.camera_id]
         if camera.model.name != "PINHOLE":
             raise ValueError("Expected an undistorted PINHOLE model")
@@ -77,8 +88,13 @@ def load_sfm_scene(
         near_val |= np.abs(timestamps - timestamps[index]) <= holdout_exclusion_s
     train = [i for i in range(len(records)) if not near_val[i]]
 
-    xyz = np.array([p.xyz for p in model.points3D.values()], dtype=np.float32)
-    rgb = np.array([p.color for p in model.points3D.values()], dtype=np.float32) / 255.0
+    points = [
+        p
+        for p in model.points3D.values()
+        if time_range_s is None or any(e.image_id in kept for e in p.track.elements)
+    ]
+    xyz = np.array([p.xyz for p in points], dtype=np.float32)
+    rgb = np.array([p.color for p in points], dtype=np.float32) / 255.0
     return SfmScene(
         [r[1] for r in records],
         [r[2] for r in records],

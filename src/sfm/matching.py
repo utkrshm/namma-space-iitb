@@ -137,10 +137,17 @@ def match_pairs(
     wanted = [[i, j, kind] for i, j, kind in pairs]
     if matches_path.exists() and listing_path.exists():
         listing = json.loads(listing_path.read_text())
-        if [[p["i"], p["j"], p["kind"]] for p in listing] == wanted:
+        cached = {(p["i"], p["j"], p["kind"]): p for p in listing}
+        if all(tuple(pair) in cached for pair in wanted):
+            # A subset of a cached run (e.g. without retrieval pairs) reuses its matches.
+            keep = {(i, j) for i, j, _ in wanted}
             with np.load(matches_path) as data:
-                matches = {tuple(map(int, key.split("-"))): data[key] for key in data.files}
-            return matches, listing
+                matches = {
+                    pair: data[key]
+                    for key in data.files
+                    if (pair := tuple(map(int, key.split("-")))) in keep
+                }
+            return matches, [cached[tuple(pair)] for pair in wanted]
 
     import torch
     from lightglue import LightGlue

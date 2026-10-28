@@ -278,7 +278,10 @@ def train_sfm_splat(
     rng = np.random.default_rng(training.seed)
 
     scene = load_sfm_scene(
-        sfm_dir, config.data.holdout_geometry_every, config.data.holdout_exclusion_s
+        sfm_dir,
+        config.data.holdout_geometry_every,
+        config.data.holdout_exclusion_s,
+        tuple(config.data.time_range_s) or None,
     )
     levels = {_level(config, step) for step, _ in training.resolution_schedule}
     levels.add(config.data.downscale)
