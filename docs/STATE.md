@@ -10,9 +10,10 @@ Work is on `feat/dense-sfm-splat`. It adds full-resolution cameras (`src/sfm/`, 
 [SFM.md](SFM.md)) and photoreal Gaussian splatting of the whole Coorg house
 (`train_sfm_splat.py` → block training → visibility merge → joint fine-tune; see
 [SPLATTING.md](SPLATTING.md#splatting-from-dense-sfm-cameras-train_sfm_splatpy--verified-on-coorg)).
-Final model: `outputs/coorg_bnb/splat_runs/blocks/merged_finetune`. On the 20 held-out
-frames it scores 23.9 dB raw / 27.0 dB colour-corrected, SSIM 0.91; at the 518 grid it
-scores 24.6 dB raw, against 17.07 dB for the earlier VGGT splat.
+Final model: `outputs/coorg_bnb/splat_runs/blocks/merged_finetune2` (published in
+`results/coorg_bnb/`). On the 20 held-out frames it scores 24.6 dB raw / 27.6 dB
+colour-corrected, SSIM 0.91; at the 518 grid it scores 25.5 dB raw, against 17.07 dB for
+the earlier VGGT splat. 18/20 held-out views beat the VGGT splat.
 
 Earlier focus (`feat/LoopClosure`):
 Work is on `feat/LoopClosure` (from `fix/recon-section-alignment`): loop closure for the
@@ -86,7 +87,8 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
   views).
   - Nearest-camera merge: 20.6 dB. Visibility-weighted merge: 24.4 dB (colour-corrected,
     at half resolution).
-  - A 6k-step joint fine-tune gives the final 23.9 / 27.0 dB, SSIM 0.91.
+  - A 6k-step joint fine-tune gives 23.9 / 27.0 dB; a second 10k-step pass gives the final
+    24.6 / 27.6 dB, SSIM 0.91. SH degree 3 is needed (SH2 −0.9 dB, SH0 −3.7 dB).
 - **Visual inspection:** `outputs/coorg_bnb/final/heldout_overview.jpg` (real frame |
   VGGT splat | new splat) and `flythrough_frames.jpg` from
   `outputs/coorg_bnb/final/coorg_flythrough.mp4` (1387 frames).

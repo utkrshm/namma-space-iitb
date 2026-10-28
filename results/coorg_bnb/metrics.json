@@ -1,29 +1,29 @@
 {
-  "step": 6000,
+  "step": 10000,
   "gaussians": 4040042,
-  "train_seconds": 1094.3131660719991,
+  "train_seconds": 1333.2873571829987,
   "train": {
-    "psnr_db": 24.161291372580607,
-    "psnr_cc_db": 25.537786296156586,
-    "ssim": 0.9039102734112349,
-    "ssim_cc": 0.9132720095212342,
-    "psnr_db_at_518": 24.930871932232968,
-    "psnr_cc_db_at_518": 26.39528040026055,
-    "coverage_alpha_gt_half": 0.9974753260612488
+    "psnr_db": 24.64896602317935,
+    "psnr_cc_db": 26.002160713320873,
+    "ssim": 0.9056644078160896,
+    "ssim_cc": 0.9138981328635919,
+    "psnr_db_at_518": 25.4704448199663,
+    "psnr_cc_db_at_518": 26.91857222260022,
+    "coverage_alpha_gt_half": 0.9979915433242673
   },
   "val": {
-    "psnr_db": 23.885803937911987,
-    "psnr_cc_db": 26.992237663269044,
-    "ssim": 0.9063507318496704,
-    "ssim_cc": 0.916312325000763,
-    "psnr_db_at_518": 24.615491580963134,
-    "psnr_cc_db_at_518": 28.29861717224121,
-    "coverage_alpha_gt_half": 0.9972661405801773
+    "psnr_db": 24.63400478363037,
+    "psnr_cc_db": 27.564829349517822,
+    "ssim": 0.9069016098976135,
+    "ssim_cc": 0.9168172538280487,
+    "psnr_db_at_518": 25.544342136383058,
+    "psnr_cc_db_at_518": 29.0285044670105,
+    "coverage_alpha_gt_half": 0.9980619758367538
   },
   "pose_correction": {
-    "rotation_deg_median": 0.0,
-    "rotation_deg_max": 0.11869406700134277,
-    "translation_over_scene_scale_median": 6.981410115258768e-05,
-    "translation_over_scene_scale_max": 0.0003073748666793108
+    "rotation_deg_median": 0.02797645516693592,
+    "rotation_deg_max": 0.2112177163362503,
+    "translation_over_scene_scale_median": 7.936989277368411e-05,
+    "translation_over_scene_scale_max": 0.0005038341623730958
   }
 }

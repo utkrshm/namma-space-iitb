@@ -83,12 +83,13 @@ Held-out frames are utkarsh's 20 validation frames. The table's PSNR columns are
 | + loop-gated cameras and screen-size pruning (`full_loops2_v6b`) | 19.5 | 22.3 | 0.80 |
 | Blocks merged by nearest camera | – | 20.6* | – |
 | Blocks merged by visibility (`blocks/merged_vis`) | – | 24.4* | – |
-| **Blocks merged by visibility + 6k-step joint fine-tune (`blocks/merged_finetune`)** | **24.6** | **28.3** | **0.91** |
+| Blocks merged by visibility + 6k-step joint fine-tune (`blocks/merged_finetune`) | 24.6 | 28.3 | 0.91 |
+| **+ second 10k-step joint fine-tune (`blocks/merged_finetune2`, final)** | **25.5** | **29.0** | **0.91** |
 
 \* Colour-corrected PSNR at half resolution (v6b scores 21.8 on that measure).
 
-The final model is `outputs/coorg_bnb/splat_runs/blocks/merged_finetune`. At full
-resolution it scores 23.9 dB raw / 27.0 dB colour-corrected, SSIM 0.91. It has 4.04M
+The final model is `outputs/coorg_bnb/splat_runs/blocks/merged_finetune2`. At full
+resolution it scores 24.6 dB raw / 27.6 dB colour-corrected, SSIM 0.91. It has 4.04M
 Gaussians; the web export keeps those with opacity ≥ 0.02. The blocks are entrance
 0–74.5 s, living room 74.5–180 s and dining 180–216 s (`configs/coorg_blocks/`); each
 block alone scores 25.8–29.3 dB colour-corrected on its own held-out frames.
