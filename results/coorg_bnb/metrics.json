@@ -1,0 +1,29 @@
+{
+  "step": 6000,
+  "gaussians": 4040042,
+  "train_seconds": 1094.3131660719991,
+  "train": {
+    "psnr_db": 24.161291372580607,
+    "psnr_cc_db": 25.537786296156586,
+    "ssim": 0.9039102734112349,
+    "ssim_cc": 0.9132720095212342,
+    "psnr_db_at_518": 24.930871932232968,
+    "psnr_cc_db_at_518": 26.39528040026055,
+    "coverage_alpha_gt_half": 0.9974753260612488
+  },
+  "val": {
+    "psnr_db": 23.885803937911987,
+    "psnr_cc_db": 26.992237663269044,
+    "ssim": 0.9063507318496704,
+    "ssim_cc": 0.916312325000763,
+    "psnr_db_at_518": 24.615491580963134,
+    "psnr_cc_db_at_518": 28.29861717224121,
+    "coverage_alpha_gt_half": 0.9972661405801773
+  },
+  "pose_correction": {
+    "rotation_deg_median": 0.0,
+    "rotation_deg_max": 0.11869406700134277,
+    "translation_over_scene_scale_median": 6.981410115258768e-05,
+    "translation_over_scene_scale_max": 0.0003073748666793108
+  }
+}

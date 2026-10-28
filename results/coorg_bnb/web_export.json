@@ -1,0 +1,12 @@
+{
+ "min_opacity": 0.02,
+ "gaussians_before": 4040042,
+ "gaussians_after": 2076335,
+ "splat_megabytes": 63.364715576171875,
+ "pruned_ply_megabytes": 491.07800674438477,
+ "val_psnr_cc_db": {
+  "full": 27.05497808456421,
+  "pruned": 27.051207447052,
+  "pruned_view_independent": 24.056392478942872
+ }
+}
