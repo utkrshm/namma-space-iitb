@@ -63,6 +63,8 @@ class SfmConfig:
     # reference model (e.g. a sequential-only run in another directory).
     loop_reference: str = ""
     loop_max_rotation_deg: float = 10.0
+    # With a loop-closed reference, also require each loop to fit its epipolar geometry.
+    loop_max_epipolar_px: float = 0.0
 
     # Mapping.
     camera_model: str = "SIMPLE_RADIAL"

@@ -39,6 +39,7 @@ def check_loops(matches, listing, features, frames, config: SfmConfig):
         intrinsics,
         config.loop_max_rotation_deg,
         config.ransac_px,
+        config.loop_max_epipolar_px,
     )
     errors = [r["rotation_error_deg"] for r in report if "rotation_error_deg" in r]
     summary = {

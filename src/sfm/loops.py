@@ -31,6 +31,28 @@ def rotation_angle_deg(rotation: np.ndarray) -> float:
     return float(np.degrees(np.arccos(np.clip((np.trace(rotation) - 1) / 2, -1, 1))))
 
 
+def sampson_px(xy_a, xy_b, pose_a, pose_b, intrinsics) -> float:
+    """Median Sampson epipolar distance (pixels) of matches under two camera-to-world poses."""
+    world_to_a, world_to_b = np.linalg.inv(pose_a), np.linalg.inv(pose_b)
+    rotation = world_to_b[:3, :3] @ world_to_a[:3, :3].T
+    translation = world_to_b[:3, 3] - rotation @ world_to_a[:3, 3]
+    skew = np.array(
+        [
+            [0, -translation[2], translation[1]],
+            [translation[2], 0, -translation[0]],
+            [-translation[1], translation[0], 0],
+        ]
+    )
+    inverse = np.linalg.inv(intrinsics)
+    fundamental = inverse.T @ skew @ rotation @ inverse
+    a = np.column_stack((xy_a, np.ones(len(xy_a))))
+    b = np.column_stack((xy_b, np.ones(len(xy_b))))
+    fa, ftb = a @ fundamental.T, b @ fundamental
+    numerator = np.sum(b * fa, axis=1) ** 2
+    denominator = fa[:, 0] ** 2 + fa[:, 1] ** 2 + ftb[:, 0] ** 2 + ftb[:, 1] ** 2
+    return float(np.median(np.sqrt(numerator / np.maximum(denominator, 1e-12))))
+
+
 def consistent_loops(
     matches: dict[tuple[int, int], np.ndarray],
     listing: list[dict],
@@ -40,8 +62,14 @@ def consistent_loops(
     intrinsics: np.ndarray,
     max_rotation_deg: float,
     ransac_px: float,
+    max_epipolar_px: float = 0.0,
 ) -> tuple[dict[tuple[int, int], np.ndarray], list[dict]]:
-    """Drop retrieval pairs that disagree with ``reference_poses`` (camera-to-world)."""
+    """Drop retrieval pairs that disagree with ``reference_poses`` (camera-to-world).
+
+    With ``max_epipolar_px`` > 0, a pair must also fit the reference's epipolar geometry
+    (median Sampson distance). Use that with a loop-closed reference, whose cameras should
+    explain every true loop to about a pixel.
+    """
     kept, report = {}, []
     kinds = {(p["i"], p["j"]): p["kind"] for p in listing}
     for (i, j), pair_matches in matches.items():
@@ -58,6 +86,11 @@ def consistent_loops(
             expected = reference_poses[b][:3, :3].T @ reference_poses[a][:3, :3]
             record["rotation_error_deg"] = rotation_angle_deg(measured @ expected.T)
             record["accepted"] = record["rotation_error_deg"] <= max_rotation_deg
+            if max_epipolar_px > 0:
+                record["epipolar_px"] = sampson_px(
+                    xy_a, xy_b, reference_poses[a], reference_poses[b], intrinsics
+                )
+                record["accepted"] &= record["epipolar_px"] <= max_epipolar_px
         else:
             record["accepted"] = False
         if record["accepted"]:
