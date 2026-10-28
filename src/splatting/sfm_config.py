@@ -50,6 +50,8 @@ class SfmTrainingConfig:
     appearance: bool = True
     appearance_lr: float = 1e-3
     appearance_regularization: float = 1e-3
+    # Monocular depth prior (Pearson correlation with <sfm_dir>/mono_depth); 0 disables.
+    depth_prior_weight: float = 0.0
     log_every: int = 200
     evaluate_every: int = 10_000
     checkpoint_every: int = 5000

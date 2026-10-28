@@ -164,3 +164,15 @@ def test_blurred_training_frames_are_dropped_but_held_out_frames_kept(wall_sfm):
 
     assert 3 not in scene.train_indices and 2 in scene.train_indices
     assert scene.val_indices == [7, 15]
+
+
+def test_depth_prior_loss_is_scale_and_shift_invariant():
+    from src.splatting.depth_prior import pearson_loss
+
+    depth = torch.linspace(1.0, 5.0, 400).reshape(20, 20)
+    valid = torch.ones(20, 20, dtype=torch.bool)
+    prior = 3.0 / depth + 7.0  # inverse depth up to an unknown scale and shift
+
+    assert float(pearson_loss(depth, prior, valid)) == pytest.approx(0.0, abs=1e-5)
+    assert float(pearson_loss(depth, -prior, valid)) == pytest.approx(2.0, abs=1e-5)
+    assert float(pearson_loss(depth, prior, torch.zeros_like(valid))) == 0.0

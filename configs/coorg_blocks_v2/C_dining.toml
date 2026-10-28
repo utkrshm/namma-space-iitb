@@ -1,0 +1,23 @@
+# Coorg block C_dining with a larger budget (1600000 Gaussians); see configs/coorg_blocks/ for the first version.
+# Full 1080×1920 training after a coarse-to-fine warm-up; sized for a 16 GB A4000 that is
+# also running other viewers.
+
+[data]
+downscale = 1
+holdout_geometry_every = 8
+holdout_exclusion_s = 0.0
+time_range_s = [180.0, 216.0]
+
+[training]
+steps = 20000
+sh_degree = 3
+resolution_schedule = [[0, 4], [2000, 2], [6000, 1]]
+pose_refinement = true
+pose_start_step = 1000
+appearance = true
+evaluate_every = 10000
+checkpoint_every = 5000
+
+[refinement]
+max_gaussians = 1600000
+stop_step = 16000

@@ -32,6 +32,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from .depth_prior import pearson_loss
 from .model import SH_C0, GaussianModel
 from .sfm_config import SfmSplatConfig
 from .sfm_scene import SfmScene, load_sfm_scene, read_rgb
@@ -369,6 +370,7 @@ def train_sfm_splat(
     strategy.check_sanity(model.params, optimizers)
     strategy_state = strategy.initialize_state()
 
+    depth_priors = _DepthPriors(sfm_dir, scene) if training.depth_prior_weight > 0 else None
     train_tensor = torch.tensor(scene.train_indices, device=device)
     log_path = output / "training.jsonl"
     order: list[int] = []
@@ -389,7 +391,7 @@ def train_sfm_splat(
         refine_pose = training.pose_refinement and step >= training.pose_start_step
         camera_to_world = corrections.camera_to_world(index, base) if refine_pose else base
         k = torch.tensor(camera.intrinsics, dtype=torch.float32, device=device)
-        rgb, _, _, info = render(
+        rgb, depth, alpha, info = render(
             model,
             torch.linalg.inv(camera_to_world),
             k,
@@ -406,6 +408,13 @@ def train_sfm_splat(
         loss = (1 - training.ssim_weight) * l1 + training.ssim_weight * (1 - structure)
         loss = loss + training.opacity_regularization * model.params["opacities"].sigmoid().mean()
         loss = loss + training.scale_regularization * model.params["scales"].exp().mean()
+        if training.depth_prior_weight > 0:
+            prior = depth_priors.get(index, device)
+            size = prior.shape
+            small_depth = F.interpolate(depth[None, None], size=size, mode="area")[0, 0]
+            small_alpha = F.interpolate(alpha[None, None], size=size, mode="area")[0, 0]
+            depth_term = pearson_loss(small_depth, prior, small_alpha.detach() > 0.5)
+            loss = loss + training.depth_prior_weight * depth_term
         if training.appearance:
             loss = (
                 loss + training.appearance_regularization * corrections.colour[index].square().sum()
@@ -524,6 +533,22 @@ def train_sfm_splat(
     }
     write_json(output / "metrics.json", metrics)
     return metrics
+
+
+class _DepthPriors:
+    """Monocular inverse depth per training image from ``<sfm_dir>/mono_depth/``, cached."""
+
+    def __init__(self, sfm_dir, scene):
+        folder = Path(sfm_dir).resolve() / "mono_depth"
+        if not folder.is_dir():
+            raise FileNotFoundError(f"Run compute_mono_depth first: {folder} is missing")
+        self.paths = [folder / (Path(p).stem + ".npy") for p in scene.image_paths]
+        self.cache: dict[int, torch.Tensor] = {}
+
+    def get(self, index: int, device) -> torch.Tensor:
+        if index not in self.cache:
+            self.cache[index] = torch.from_numpy(np.load(self.paths[index]).astype(np.float32))
+        return self.cache[index].to(device, non_blocking=True)
 
 
 @torch.no_grad()
