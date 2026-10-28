@@ -59,6 +59,11 @@ class SfmConfig:
     retrieval_max_planar_fraction: float = 0.7
     ransac_px: float = 2.0
 
+    # Loop check: when set, retrieval pairs must agree in relative rotation with this
+    # reference model (e.g. a sequential-only run in another directory).
+    loop_reference: str = ""
+    loop_max_rotation_deg: float = 10.0
+
     # Mapping.
     camera_model: str = "SIMPLE_RADIAL"
     mapper: str = "global"  # "global" (GLOMAP) or "incremental"

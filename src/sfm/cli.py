@@ -21,6 +21,9 @@ def main(argv=None) -> int:
     parser.add_argument("--fps", type=float, help="Selected frames per second of video")
     parser.add_argument("--mapper", choices=("global", "incremental"))
     parser.add_argument("--camera-model", choices=("SIMPLE_RADIAL", "OPENCV"))
+    parser.add_argument(
+        "--loop-reference", help="Sparse model whose relative rotations retrieval pairs must match"
+    )
     parser.add_argument("--retrieval-top-k", type=int, help="0 uses sequential pairs only")
     parser.add_argument("--device", default="cuda:0")
     args = parser.parse_args(argv)
@@ -32,6 +35,7 @@ def main(argv=None) -> int:
             "mapper": args.mapper,
             "camera_model": args.camera_model,
             "retrieval_top_k": args.retrieval_top_k,
+            "loop_reference": args.loop_reference,
         }.items()
         if value is not None
     }

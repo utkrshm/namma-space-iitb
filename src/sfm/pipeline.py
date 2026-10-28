@@ -18,8 +18,40 @@ from .evaluation import (
     trajectory_continuity,
 )
 from .frames import export_frames
+from .loops import consistent_loops
 from .mapping import build_database, initial_camera_params, run_mapper, undistort
 from .matching import build_pairs, extract_features, global_descriptors, load_features, match_pairs
+
+
+def check_loops(matches, listing, features, frames, config: SfmConfig):
+    """Filter retrieval pairs against the reference model; returns matches and a summary."""
+    import pycolmap
+
+    reference = pycolmap.Reconstruction(config.loop_reference)
+    focal, cx, cy = next(iter(reference.cameras.values())).params[:3]
+    intrinsics = np.array([[focal, 0, cx - 0.5], [0, focal, cy - 0.5], [0, 0, 1.0]])
+    kept, report = consistent_loops(
+        matches,
+        listing,
+        features,
+        frames,
+        camera_poses(reference, frames),
+        intrinsics,
+        config.loop_max_rotation_deg,
+        config.ransac_px,
+    )
+    errors = [r["rotation_error_deg"] for r in report if "rotation_error_deg" in r]
+    summary = {
+        "reference": config.loop_reference,
+        "retrieval_checked": len(report),
+        "retrieval_accepted": sum(r["accepted"] for r in report),
+        "rotation_error_deg_percentiles": {
+            str(q): float(np.percentile(errors, q)) for q in (10, 50, 75, 90, 99)
+        }
+        if errors
+        else {},
+    }
+    return kept, summary
 
 
 def run_sfm(
@@ -52,6 +84,9 @@ def run_sfm(
     timestamps = np.array([frame["timestamp_s"] for frame in frames])
     pairs = build_pairs(timestamps, descriptors, config)
     matches, listing = match_pairs(output, features, pairs, config, device)
+    loop_check = None
+    if config.loop_reference:
+        matches, loop_check = check_loops(matches, listing, features, frames, config)
     timings["matching_s"] = time.perf_counter() - start
 
     start = time.perf_counter()
@@ -83,6 +118,7 @@ def run_sfm(
             "retrieval_accepted": sum(p["accepted"] for p in retrieval),
             "matched": len(matches),
         },
+        "loop_check": loop_check,
         "models": [m.num_reg_images() for m in models],
         "continuity": trajectory_continuity(poses, frames),
         "largest_model": model_report(model, frames),

@@ -134,3 +134,8 @@ def test_training_fits_held_out_views_and_exports_viewer_files(wall_sfm, tmp_pat
     model, metadata = load_model(tmp_path / "splat" / "scene.ply", "cuda")
     assert model.count == metrics["gaussians"] and metadata["active_sh_degree"] == 1
     assert len(load_cameras(tmp_path / "splat" / "cameras.json")) == 16
+
+    # Resuming a finished run restores the saved Gaussians and corrections exactly.
+    resumed = train_sfm_splat(wall_sfm, tmp_path / "splat", config, resume=True)
+    assert resumed["gaussians"] == metrics["gaussians"]
+    assert resumed["val"]["psnr_cc_db"] == pytest.approx(metrics["val"]["psnr_cc_db"], abs=0.05)

@@ -95,8 +95,11 @@ class CameraCorrections(torch.nn.Module):
 def fit_colour(rendered: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     """Least-squares affine colour map rendered → target, applied to ``rendered``."""
     x = torch.cat((rendered.reshape(-1, 3), torch.ones_like(rendered[..., :1]).reshape(-1, 1)), 1)
-    solution = torch.linalg.lstsq(x.double(), target.reshape(-1, 3).double()).solution
-    return (x.double() @ solution).float().reshape(rendered.shape).clamp(0, 1)
+    y = target.reshape(-1, 3)
+    # Normal equations (4×4) keep memory constant at full resolution.
+    gram = (x.T @ x).double() + 1e-6 * torch.eye(4, device=x.device, dtype=torch.float64)
+    solution = torch.linalg.solve(gram, (x.T @ y).double()).float()
+    return (x @ solution).reshape(rendered.shape).clamp(0, 1)
 
 
 def initial_model(scene: SfmScene, config: SfmSplatConfig, device: str) -> GaussianModel:
@@ -264,14 +267,19 @@ def train_sfm_splat(
     config: SfmSplatConfig | None = None,
     *,
     device: str = "cuda:0",
+    resume: bool = False,
 ) -> dict:
-    """Train one splat; returns the final metrics (also written to ``metrics.json``)."""
+    """Train one splat; returns the final metrics (also written to ``metrics.json``).
+
+    ``resume`` continues from ``checkpoint.pt`` in ``output_dir``: Gaussians, camera and
+    colour corrections and the step are restored; Adam moments restart from zero.
+    """
     from gsplat.strategy import MCMCStrategy
 
     config = config or SfmSplatConfig()
     training, refinement = config.training, config.refinement
     output = Path(output_dir).resolve()
-    if output.exists() and any(output.iterdir()):
+    if not resume and output.exists() and any(output.iterdir()):
         raise ValueError(f"Choose a new or empty output directory: {output}")
     output.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(training.seed)
@@ -289,6 +297,12 @@ def train_sfm_splat(
     radius = scene_scale(scene)
     model = initial_model(scene, config, device)
     corrections = CameraCorrections(len(scene.cameras)).to(device)
+    first_step = 0
+    if resume:
+        state = torch.load(output / "checkpoint.pt", map_location="cpu", weights_only=True)
+        model = GaussianModel(state["params"], state["sh_degree"]).to(device)
+        corrections.load_state_dict(state["corrections"])
+        first_step = int(state["step"])
 
     metadata = {
         "schema_version": 1,
@@ -339,7 +353,9 @@ def train_sfm_splat(
     log_path = output / "training.jsonl"
     order: list[int] = []
     started = time.perf_counter()
-    for step in range(training.steps):
+    for group in optimizers["means"].param_groups:
+        group["lr"] *= decay**first_step
+    for step in range(first_step, training.steps):
         if not order:
             order = list(rng.permutation(scene.train_indices))
         index = int(order.pop())
@@ -423,7 +439,7 @@ def train_sfm_splat(
                 f"x{level} t={row['elapsed_s']:.0f}s mem={row['gpu_peak_gib']:.1f}G",
                 flush=True,
             )
-        if step and step % training.evaluate_every == 0 and scene.val_indices:
+        if step > first_step and step % training.evaluate_every == 0 and scene.val_indices:
             evaluate(
                 model,
                 scene,

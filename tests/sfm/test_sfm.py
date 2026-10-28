@@ -19,6 +19,7 @@ from src.sfm import (
     umeyama,
 )
 from src.sfm.frames import decode_selected
+from src.sfm.loops import consistent_loops
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "room_short.mp4"
 
@@ -133,3 +134,32 @@ def test_continuity_flags_misplaced_segments_but_not_smooth_walks():
     assert report["median_step"] == pytest.approx(0.05)
     assert [(b["from_s"], b["to_s"]) for b in report["breaks"]] == [(6.0, 6.25)]
     assert report["breaks"][0]["turn_deg"] > 170
+
+
+def test_loop_check_keeps_pairs_that_agree_with_the_reference_trajectory():
+    """A true loop agrees with the reference rotation; a false one (wrong place) does not."""
+    rng = np.random.default_rng(2)
+    intrinsics = np.array([[800.0, 0, 500], [0, 800.0, 500], [0, 0, 1]])
+    points = np.column_stack((rng.uniform(-2, 2, (400, 2)), rng.uniform(3, 8, 400)))
+    rotation_b = Rotation.from_rotvec([0.0, 0.2, 0.05]).as_matrix()  # world-to-camera of b
+    centre_b = np.array([0.6, 0.0, 0.1])
+    xy_a = _project(points, np.eye(3), np.zeros(3))
+    xy_b = _project(points, rotation_b, centre_b)
+    index = np.arange(400)
+    features = [{"keypoints": xy_a}, {"keypoints": xy_b}, {"keypoints": xy_b}]
+    frames = [{"frame_id": f"f{k}"} for k in range(3)]
+    pose_b = np.eye(4)
+    pose_b[:3, :3], pose_b[:3, 3] = rotation_b.T, centre_b
+    wrong = np.eye(4)
+    wrong[:3, :3] = Rotation.from_rotvec([0.0, np.pi, 0.0]).as_matrix() @ rotation_b.T
+    reference = {"f0": np.eye(4), "f1": pose_b, "f2": wrong}
+    matches = {(0, 1): np.column_stack((index, index)), (0, 2): np.column_stack((index, index))}
+    listing = [{"i": 0, "j": 1, "kind": "retrieval"}, {"i": 0, "j": 2, "kind": "retrieval"}]
+
+    kept, report = consistent_loops(
+        matches, listing, features, frames, reference, intrinsics, 10, 1.0
+    )
+
+    assert set(kept) == {(0, 1)}
+    assert report[0]["rotation_error_deg"] < 1.0
+    assert report[1]["rotation_error_deg"] > 170
