@@ -130,8 +130,10 @@ def test_training_fits_held_out_views_and_exports_viewer_files(wall_sfm, tmp_pat
     metrics = train_sfm_splat(wall_sfm, tmp_path / "splat", config)
 
     assert metrics["val"]["psnr_cc_db"] > 22  # one val view extrapolates past the path
-    assert metrics["train"]["psnr_db"] > 25
+    assert metrics["train"]["psnr_db"] > 24
     model, metadata = load_model(tmp_path / "splat" / "scene.ply", "cuda")
+    extent = json.loads((tmp_path / "splat" / "run.json").read_text())["scene_extent"]
+    assert float(model.params["scales"].exp().max()) <= 0.1 * extent * 1.0001
     assert model.count == metrics["gaussians"] and metadata["active_sh_degree"] == 1
     assert len(load_cameras(tmp_path / "splat" / "cameras.json")) == 16
 

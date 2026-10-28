@@ -131,6 +131,13 @@ def scene_scale(scene: SfmScene) -> float:
     return 1.1 * float(np.linalg.norm(centres - centres.mean(0), axis=1).max())
 
 
+def scene_extent(scene: SfmScene) -> float:
+    """Size of the observed scene: camera spread or 90th-percentile point distance."""
+    centres = np.stack([c.camera_to_world[:3, 3] for c in scene.cameras])
+    distance = np.linalg.norm(scene.points - centres.mean(0), axis=1)
+    return max(scene_scale(scene), float(np.percentile(distance, 90)))
+
+
 def render(model, world_to_camera, intrinsics, width, height, degree, mode):
     from gsplat import rasterization
 
@@ -295,6 +302,7 @@ def train_sfm_splat(
     levels.add(config.data.downscale)
     images = ImageCache(scene, levels)
     radius = scene_scale(scene)
+    extent = scene_extent(scene)
     model = initial_model(scene, config, device)
     corrections = CameraCorrections(len(scene.cameras)).to(device)
     first_step = 0
@@ -311,6 +319,7 @@ def train_sfm_splat(
         "sfm_dir": str(Path(sfm_dir).resolve()),
         "scene_units": "arbitrary (SfM gauge)",
         "scene_scale": radius,
+        "scene_extent": extent,
         "camera_convention": "opencv_world_to_camera",
         "pixel_convention": "integer_centers",
         "sfm_splat_config": config.to_dict(),
@@ -407,13 +416,17 @@ def train_sfm_splat(
                 colour = corrections.colour
                 colour[train_tensor] -= colour[train_tensor].mean(0)
         colour_optimizer.zero_grad(set_to_none=True)
+        _limit_scales(model, refinement, extent)
         strategy.step_post_backward(
             model.params,
             optimizers,
             strategy_state,
             step,
             info,
-            lr=optimizers["means"].param_groups[0]["lr"],
+            # MCMC noise is lr × covariance: length³ in world units. gsplat assumes a world
+            # normalized to radius ~1, so divide by radius² to keep the same relative noise
+            # (unnormalized, Coorg's radius ~11 made it ~120× too strong and fogged the scene).
+            lr=optimizers["means"].param_groups[0]["lr"] / radius**2,
         )
         for group in optimizers["means"].param_groups:
             group["lr"] *= decay
@@ -499,6 +512,14 @@ def train_sfm_splat(
     }
     write_json(output / "metrics.json", metrics)
     return metrics
+
+
+@torch.no_grad()
+def _limit_scales(model, refinement, extent: float) -> None:
+    """Clamp Gaussian extents to a fraction of the scene extent (a safety net)."""
+    limit = math.log(refinement.max_scale_fraction * extent)
+    scales = model.params["scales"]
+    scales.clamp_(max=limit)
 
 
 def _save(output: Path, model, corrections, step: int, metadata: dict) -> None:

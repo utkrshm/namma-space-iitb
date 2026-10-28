@@ -1,0 +1,15 @@
+# Quick camera-quality proxy: a short 1/4-resolution splat. Compares SfM variants by
+# training/held-out fit before committing to a full-resolution run.
+
+[data]
+downscale = 4
+
+[training]
+steps = 5000
+resolution_schedule = [[0, 1]]
+evaluate_every = 100000
+checkpoint_every = 100000
+
+[refinement]
+max_gaussians = 600000
+stop_step = 4000

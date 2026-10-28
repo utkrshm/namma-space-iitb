@@ -63,6 +63,8 @@ class SfmRefinementConfig:
     stop_step: int = 25_000
     every: int = 100
     min_opacity: float = 0.005
+    # Largest Gaussian extent as a fraction of the scene extent (clamped).
+    max_scale_fraction: float = 0.1
 
 
 @dataclass(frozen=True)
