@@ -58,6 +58,7 @@ def wall_sfm(tmp_path):
                 "frame_id": f"wall:{index}",
                 "timestamp_s": index * 0.25,
                 "geometry": True,
+                "sharpness": 100.0,
             }
         )
     (sparse / "cameras.txt").write_text(f"1 PINHOLE {WIDTH} {HEIGHT} {FOCAL} {FOCAL} 32 24\n")
@@ -151,3 +152,15 @@ def test_block_ownership_follows_the_nearest_camera():
     points = np.array([[0.4, 2, 0], [5.4, 0, 0], [5.6, 0, 0], [12, -1, 0]])
 
     assert block_owner(centres, labels, points).tolist() == [0, 0, 1, 1]
+
+
+def test_blurred_training_frames_are_dropped_but_held_out_frames_kept(wall_sfm):
+    frames = json.loads((wall_sfm / "frames.json").read_text())
+    frames[3]["sharpness"] = 30.0  # a motion-blurred training frame
+    frames[7]["sharpness"] = 30.0  # a blurred held-out frame stays held out
+    (wall_sfm / "frames.json").write_text(json.dumps(frames))
+
+    scene = load_sfm_scene(wall_sfm, min_relative_sharpness=0.7)
+
+    assert 3 not in scene.train_indices and 2 in scene.train_indices
+    assert scene.val_indices == [7, 15]

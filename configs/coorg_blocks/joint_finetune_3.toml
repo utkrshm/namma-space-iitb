@@ -1,0 +1,24 @@
+# Third joint fine-tune (8k steps) from blocks/merged_finetune2 with motion-blurred training frames dropped.
+# image: no densification, full resolution and full SH from the start, small position lr.
+# Removes floaters that one block left in another block's views.
+
+[data]
+downscale = 1
+# Train only on frames at least 70% as sharp as their ±2 s neighbourhood.
+min_relative_sharpness = 0.7
+
+[training]
+steps = 8000
+sh_degree = 3
+sh_interval = 1
+resolution_schedule = [[0, 1]]
+means_lr = 4e-5
+means_lr_final = 1.6e-6
+pose_start_step = 0
+evaluate_every = 100000
+checkpoint_every = 2500
+
+[refinement]
+max_gaussians = 5000000
+start_step = 100000
+stop_step = 100000

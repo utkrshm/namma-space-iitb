@@ -89,6 +89,9 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
     at half resolution).
   - A 6k-step joint fine-tune gives 23.9 / 27.0 dB; a second 10k-step pass gives the final
     24.6 / 27.6 dB, SSIM 0.91. SH degree 3 is needed (SH2 −0.9 dB, SH0 −3.7 dB).
+- **Blur filter experiment:** a third fine-tune without motion-blurred training frames tied
+  (24.65 / 27.48 dB, SSIM 0.90), so `merged_finetune2` stays final. The 200 s and
+  72–80 s weak spots are capture-limited (blurred or textureless source frames).
 - **Visual inspection:** `outputs/coorg_bnb/final/heldout_overview.jpg` (real frame |
   VGGT splat | new splat) and `flythrough_frames.jpg` from
   `outputs/coorg_bnb/final/coorg_flythrough.mp4` (1387 frames).

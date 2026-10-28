@@ -18,6 +18,8 @@ class SfmDataConfig:
     holdout_exclusion_s: float = 0.0
     # Optional [start, end] source-time window in seconds; empty trains on every frame.
     time_range_s: tuple[float, ...] = ()
+    # Drop training frames below this fraction of the local (±2 s) median sharpness; 0 keeps all.
+    min_relative_sharpness: float = 0.0
 
 
 @dataclass(frozen=True)

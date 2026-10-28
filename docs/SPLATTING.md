@@ -116,6 +116,12 @@ Lessons from the failed runs:
   past them (20.6 dB). Ownership by Σ 1/depth² over each block's cameras fixed that
   (24.4 dB). A short joint fine-tune without densification removed the floaters that
   one block left in another's views.
+- **Dropping motion-blurred training frames did not help** (`data.min_relative_sharpness = 0.7`,
+  54/907 frames, `joint_finetune_3.toml`): 24.65 / 27.48 dB, SSIM 0.90, against
+  24.63 / 27.56 / 0.91 for the final model. The 200 s view stays at 13.6 dB; its held-out
+  reference frame is itself flagged `suspected_blur` (sharpness 91). The remaining weak
+  spots (200 s shelf, 72–80 s blank ceiling) are capture limits: recapture those passes
+  more slowly. Photometric training cannot add texture or sharpness that the video lacks.
 - **Fly-through video:** `render_flythrough.py <scene.ply> <sfm_dir> --output x.mp4`
   follows the capture path, with smoothed centres and slerped rotations.
 - **Pruning is free.** Removing Gaussians below 0.02 opacity drops 69% of them with no

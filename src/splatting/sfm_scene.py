@@ -38,11 +38,16 @@ def load_sfm_scene(
     holdout_geometry_every: int = 8,
     holdout_exclusion_s: float = 0.0,
     time_range_s: tuple[float, float] | None = None,
+    min_relative_sharpness: float = 0.0,
 ) -> SfmScene:
     """Read ``<sfm_dir>/undistorted`` and ``frames.json``; images are ordered by time.
 
     ``time_range_s`` keeps only frames in that source-time window and the SfM points they
     observe (e.g. one room, or a segment between mapping breaks).
+    ``min_relative_sharpness`` drops *training* frames whose preprocessing sharpness is below
+    that fraction of the median within ±2 s: motion-blurred frames otherwise teach the splat
+    blurred surfaces, while their sharp neighbours already cover the same view. Held-out
+    frames are never dropped.
     """
     import pycolmap
 
@@ -80,6 +85,7 @@ def load_sfm_scene(
     # Every Nth geometry frame of the whole capture, so a time window holds out exactly
     # the global held-out frames that fall inside it (blocks can then be merged and scored
     # on the same views without having trained on them).
+    frames_by_id = {f["frame_id"]: f for f in frames.values()}
     ordered = sorted(frames.values(), key=lambda f: f["timestamp_s"])
     geometry_ids = [f["frame_id"] for f in ordered if f["geometry"]]
     held_out = {
@@ -91,7 +97,13 @@ def load_sfm_scene(
     near_val = np.zeros(len(records), bool)
     for index in val:
         near_val |= np.abs(timestamps - timestamps[index]) <= holdout_exclusion_s
-    train = [i for i in range(len(records)) if not near_val[i]]
+    blurred = np.zeros(len(records), bool)
+    if min_relative_sharpness > 0:
+        sharpness = np.array([frames_by_id[r[1].frame_id]["sharpness"] for r in records])
+        for i, time in enumerate(timestamps):
+            local = np.median(sharpness[np.abs(timestamps - time) <= 2.0])
+            blurred[i] = sharpness[i] < min_relative_sharpness * local
+    train = [i for i in range(len(records)) if not near_val[i] and not blurred[i]]
 
     points = [
         p

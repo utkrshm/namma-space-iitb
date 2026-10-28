@@ -300,6 +300,7 @@ def train_sfm_splat(
         config.data.holdout_geometry_every,
         config.data.holdout_exclusion_s,
         tuple(config.data.time_range_s) or None,
+        config.data.min_relative_sharpness,
     )
     levels = {_level(config, step) for step, _ in training.resolution_schedule}
     levels.add(config.data.downscale)
