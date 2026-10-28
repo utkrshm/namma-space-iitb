@@ -10,10 +10,11 @@ Work is on `feat/dense-sfm-splat`. It adds full-resolution cameras (`src/sfm/`, 
 [SFM.md](SFM.md)) and photoreal Gaussian splatting of the whole Coorg house
 (`train_sfm_splat.py` → block training → visibility merge → joint fine-tune; see
 [SPLATTING.md](SPLATTING.md#splatting-from-dense-sfm-cameras-train_sfm_splatpy--verified-on-coorg)).
-Final model: `outputs/coorg_bnb/splat_runs/blocks/merged_finetune2` (published in
-`results/coorg_bnb/`). On the 20 held-out frames it scores 24.6 dB raw / 27.6 dB
-colour-corrected, SSIM 0.91; at the 518 grid it scores 25.5 dB raw, against 17.07 dB for
-the earlier VGGT splat. 18/20 held-out views beat the VGGT splat.
+Final model: `outputs/coorg_bnb/splat_runs/blocks/merged_dense8_depth` (published in
+`results/coorg_bnb/`): merged blocks, then 8 frames/s and a depth prior. On the 20 held-out frames
+it scores 24.71 dB raw / 27.04 dB colour-corrected, SSIM 0.91; at the 518 grid it scores 25.6 dB
+raw, against 17.07 dB for the earlier VGGT splat. Worst view: 19.5 dB. 19/20 held-out views beat
+the VGGT splat.
 
 Earlier focus (`feat/LoopClosure`):
 Work is on `feat/LoopClosure` (from `fix/recon-section-alignment`): loop closure for the
@@ -96,8 +97,12 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
   - Bigger per-block budgets: worse for the entrance and living room, +0.2 dB for dining.
   - Monocular depth prior: −0.4 dB on held-out views, fewer floaters in offset views
     (2.65 → 2.35% of pixels), worse at the entrance.
-  - `merged_finetune2` stays final. Further gains need a recapture: slower passes at
-    199–201 s and 72–80 s, and a loop back from the dining room.
+  - **Densification (`densify_sfm.py`):** 834/842 extra frames (8 per second) registered by
+    PnP into `sfm_loops2`, with a median of 1814 inliers. The previous model renders them at
+    28.87 dB, the same as its training frames.
+  - Fine-tuning on the dense frames plus the depth prior gives the new final model
+    `merged_dense8_depth`. Further gains need a recapture: slower passes at 199–201 s and
+    72–80 s, and a loop back from the dining room.
 - **Visual inspection:** `outputs/coorg_bnb/final/heldout_overview.jpg` (real frame |
   VGGT splat | new splat) and `flythrough_frames.jpg` from
   `outputs/coorg_bnb/final/coorg_flythrough.mp4` (1387 frames).

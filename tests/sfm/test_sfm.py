@@ -163,3 +163,20 @@ def test_loop_check_keeps_pairs_that_agree_with_the_reference_trajectory():
     assert set(kept) == {(0, 1)}
     assert report[0]["rotation_error_deg"] < 1.0
     assert report[1]["rotation_error_deg"] > 170
+
+
+def test_undistortion_maps_are_identity_without_distortion_and_shift_with_it():
+    import pycolmap
+
+    from src.sfm.densify import undistortion_maps
+
+    distorted = pycolmap.Camera(model="SIMPLE_RADIAL", width=40, height=30, params=[50, 20, 15, 0])
+    pinhole = pycolmap.Camera(model="PINHOLE", width=40, height=30, params=[50, 50, 20, 15])
+    map_x, map_y = undistortion_maps(distorted, pinhole)
+    v, u = np.mgrid[:30, :40]
+    assert np.allclose(map_x, u, atol=1e-4) and np.allclose(map_y, v, atol=1e-4)
+
+    barrel = pycolmap.Camera(model="SIMPLE_RADIAL", width=40, height=30, params=[50, 20, 15, 0.1])
+    map_x, _ = undistortion_maps(barrel, pinhole)
+    # Positive k pushes off-centre pixels outward in the distorted image; the centre is fixed.
+    assert map_x[15, 39] > 39 and abs(map_x[15, 19] - 19) < 0.05

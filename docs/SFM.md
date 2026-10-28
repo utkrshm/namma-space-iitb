@@ -46,6 +46,21 @@ features and matches through symlinks (`images`, `features`, `descriptors.npy`,
 25 minutes on the CPU. `undistorted/` is the input for
 [`train_sfm_splat.py`](SPLATTING.md).
 
+## Adding frames to a solved model (`densify_sfm.py`)
+
+```sh
+uv run --no-sync python densify_sfm.py outputs/coorg_bnb/sfm_loops2 outputs/coorg_bnb/preprocessing \
+  --output-dir outputs/coorg_bnb/sfm_dense8 --fps 8
+```
+
+Frames selected at the higher rate that are not yet solved are matched to their 4 nearest
+registered frames. Keypoints that observe a 3D point give 2D–3D correspondences, and each
+pose is solved with pycolmap's robust PnP and refinement. The base cameras and points are not
+changed. The output is a `src.sfm` hand-off directory: `frames.json`,
+`undistorted/{images,sparse}` and `densify.json`. On Coorg, 834/842 frames were registered
+with a median of 1814 inliers. The previous splat renders these unseen frames as well as its
+training frames (28.87 vs 28.89 dB colour-corrected), so the poses are consistent.
+
 ## Procedure
 
 1. **Frames:** the sharpest unflagged frame in every 0.25 s window, plus all 161 geometry
