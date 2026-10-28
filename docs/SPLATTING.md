@@ -122,6 +122,28 @@ Lessons from the failed runs:
   reference frame is itself flagged `suspected_blur` (sharpness 91). The remaining weak
   spots (200 s shelf, 72–80 s blank ceiling) are capture limits: recapture those passes
   more slowly. Photometric training cannot add texture or sharpness that the video lacks.
+- **Bigger per-block budgets did not help** (`configs/coorg_blocks_v2`). Own-frame held-out
+  PSNR, raw / colour-corrected:
+
+  | Block | Before | After | Result |
+  | --- | --- | --- | --- |
+  | Entrance (1.6M → 2.4M) | 24.08 / 29.34 dB | 23.26 / 28.82 dB | worse |
+  | Living room (1.6M → 2.4M) | 21.65 / 26.45 dB | 21.50 / 25.59 dB | worse |
+  | Dining (1.0M → 1.6M) | 21.18 / 25.81 dB | 21.31 / 26.00 dB | slightly better |
+
+  Capacity is not the limit; extra Gaussians mostly add floaters.
+- **Monocular depth prior is a trade-off** (`compute_mono_depth.py`, then
+  `training.depth_prior_weight`; `joint_finetune_depth*.toml`).
+  - *Held-out views near the path:* weight 0.05 gives 24.24 / 27.13 dB and weight 0.02
+    gives 24.11 / 27.27 dB, against 24.63 / 27.56 for the final model.
+  - *Away from the path:* views offset 0.3 units sideways have fewer near-camera floaters.
+    The share of pixels with depth < 0.25 drops 2.65% → 2.35% overall, and 5.1 → 2.5% at
+    160–200 s. The blank-ceiling beams come out straight
+    (`outputs/coorg_bnb/final/ceiling_novel_view_compare.jpg`).
+  - *Entrance:* the proxy rises 4.4 → 7.2% at the entrance. There the camera looks down at
+    nearby floor, so the proxy partly counts real surfaces.
+  - The final model stays the no-prior one. Use the prior when free roaming far from the
+    capture path matters more than accuracy near it.
 - **Fly-through video:** `render_flythrough.py <scene.ply> <sfm_dir> --output x.mp4`
   follows the capture path, with smoothed centres and slerped rotations.
 - **Pruning is free.** Removing Gaussians below 0.02 opacity drops 69% of them with no

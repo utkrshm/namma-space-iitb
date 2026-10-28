@@ -92,6 +92,12 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 - **Blur filter experiment:** a third fine-tune without motion-blurred training frames tied
   (24.65 / 27.48 dB, SSIM 0.90), so `merged_finetune2` stays final. The 200 s and
   72–80 s weak spots are capture-limited (blurred or textureless source frames).
+- **Further experiments (29-10-26):**
+  - Bigger per-block budgets: worse for the entrance and living room, +0.2 dB for dining.
+  - Monocular depth prior: −0.4 dB on held-out views, fewer floaters in offset views
+    (2.65 → 2.35% of pixels), worse at the entrance.
+  - `merged_finetune2` stays final. Further gains need a recapture: slower passes at
+    199–201 s and 72–80 s, and a loop back from the dining room.
 - **Visual inspection:** `outputs/coorg_bnb/final/heldout_overview.jpg` (real frame |
   VGGT splat | new splat) and `flythrough_frames.jpg` from
   `outputs/coorg_bnb/final/coorg_flythrough.mp4` (1387 frames).
