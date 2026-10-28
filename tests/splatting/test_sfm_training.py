@@ -141,3 +141,13 @@ def test_training_fits_held_out_views_and_exports_viewer_files(wall_sfm, tmp_pat
     resumed = train_sfm_splat(wall_sfm, tmp_path / "splat", config, resume=True)
     assert resumed["gaussians"] == metrics["gaussians"]
     assert resumed["val"]["psnr_cc_db"] == pytest.approx(metrics["val"]["psnr_cc_db"], abs=0.05)
+
+
+def test_block_ownership_follows_the_nearest_camera():
+    from src.splatting.merge_blocks import block_owner
+
+    centres = np.array([[0.0, 0, 0], [1, 0, 0], [10, 0, 0], [11, 0, 0]])
+    labels = np.array([0, 0, 1, 1])
+    points = np.array([[0.4, 2, 0], [5.4, 0, 0], [5.6, 0, 0], [12, -1, 0]])
+
+    assert block_owner(centres, labels, points).tolist() == [0, 0, 1, 1]

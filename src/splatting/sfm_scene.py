@@ -77,12 +77,17 @@ def load_sfm_scene(
     timestamps = np.array([r[0] for r in records])
     geometry = np.array([r[3] for r in records])
 
-    geometry_positions = np.flatnonzero(geometry)
-    val = [
-        int(index)
-        for k, index in enumerate(geometry_positions)
+    # Every Nth geometry frame of the whole capture, so a time window holds out exactly
+    # the global held-out frames that fall inside it (blocks can then be merged and scored
+    # on the same views without having trained on them).
+    ordered = sorted(frames.values(), key=lambda f: f["timestamp_s"])
+    geometry_ids = [f["frame_id"] for f in ordered if f["geometry"]]
+    held_out = {
+        frame_id
+        for k, frame_id in enumerate(geometry_ids)
         if holdout_geometry_every and (k + 1) % holdout_geometry_every == 0
-    ]
+    }
+    val = [i for i, record in enumerate(records) if record[1].frame_id in held_out]
     near_val = np.zeros(len(records), bool)
     for index in val:
         near_val |= np.abs(timestamps - timestamps[index]) <= holdout_exclusion_s
