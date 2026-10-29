@@ -38,7 +38,7 @@ from .reconstruction import (
     unproject_depth,
 )
 from .rendering import render_cameras, render_gaussians
-from .sfm import SfmConfig, run_sfm
+from .sfm import SfmConfig, densify, floor_bundle_adjust, run_sfm
 from .splatting import (
     Camera,
     RefinedScene,
@@ -48,8 +48,10 @@ from .splatting import (
     export_ply,
     load_model,
     load_scene,
+    render_tour,
     train_sfm_splat,
     train_splat,
+    transfer_splat,
     view_splat,
 )
 
@@ -80,9 +82,11 @@ __all__ = [
     "correspondence_metrics",
     "create_sections",
     "decode_cameras",
+    "densify",
     "estimate_floor_alignment",
     "evaluate_icp",
     "export_ply",
+    "floor_bundle_adjust",
     "inspect_section_cloud",
     "load_images",
     "load_model",
@@ -94,6 +98,7 @@ __all__ = [
     "reconstruct_preprocessed",
     "render_cameras",
     "render_gaussians",
+    "render_tour",
     "robust_sim3",
     "run_loop_closure",
     "run_section_alignment",
@@ -105,6 +110,7 @@ __all__ = [
     "to_open3d",
     "train_sfm_splat",
     "train_splat",
+    "transfer_splat",
     "transform_observations",
     "unproject_depth",
     "view_splat",

@@ -5,7 +5,7 @@ the loop checks. Instead, extra frames (e.g. 8 per second instead of 4) are matc
 LightGlue to the nearest already-registered frames. Matched keypoints that observe a 3D
 point give 2D–3D correspondences, and the pose is solved with robust PnP and refined
 (pycolmap). The existing cameras and points are not changed. Extra frames are undistorted
-with the model's own SIMPLE_RADIAL camera, and the result is written as a new SfM
+with the model's own camera (any COLMAP model), and the result is written as a new SfM
 directory in the `src.sfm` hand-off layout:
 
     frames.json                    base frames + extra frames (``geometry`` false)
@@ -31,18 +31,16 @@ from .matching import extract_features, load_features
 
 
 def undistortion_maps(distorted, undistorted):
-    """cv2.remap maps from the undistorted PINHOLE grid to the distorted SIMPLE_RADIAL image.
+    """cv2.remap maps from the undistorted PINHOLE grid to the distorted image.
 
-    COLMAP places pixel centres at +0.5; array indices are integer-centred.
+    Works for any COLMAP camera model (`img_from_cam`). COLMAP places pixel centres at
+    +0.5; array indices are integer-centred.
     """
-    focal, cx, cy, k = distorted.params
     fx, fy, ux, uy = undistorted.params
     v, u = np.mgrid[: undistorted.height, : undistorted.width].astype(np.float64) + 0.5
-    x, y = (u - ux) / fx, (v - uy) / fy
-    factor = 1 + k * (x * x + y * y)
-    map_x = (focal * x * factor + cx - 0.5).astype(np.float32)
-    map_y = (focal * y * factor + cy - 0.5).astype(np.float32)
-    return map_x, map_y
+    rays = np.stack(((u - ux) / fx, (v - uy) / fy, np.ones_like(u)), axis=-1).reshape(-1, 3)
+    pixels = distorted.img_from_cam(rays, check_cheirality=False).reshape(*u.shape, 2) - 0.5
+    return pixels[..., 0].astype(np.float32), pixels[..., 1].astype(np.float32)
 
 
 def _pose_line(image_id: int, world_to_camera: np.ndarray, camera_id: int, name: str) -> str:
@@ -59,6 +57,8 @@ def densify(
     frames_per_second: float = 8.0,
     neighbours: int = 4,
     min_inliers: int = 100,
+    holdout_geometry_every: int = 0,
+    holdout_exclusion_s: float = 0.0,
     config: SfmConfig | None = None,
     device: str = "cuda:0",
 ) -> dict:
@@ -81,8 +81,23 @@ def densify(
     candidates = select_frames(
         result.scores, geometry, replace(config, frames_per_second=frames_per_second)
     )
+    # Held-out views of splat training (every Nth geometry frame, as in `load_sfm_scene`)
+    # keep no extra frames within `holdout_exclusion_s`, so they stay unseen.
+    geometry_frames = sorted(
+        (f for f in base_frames if f["geometry"]), key=lambda f: f["timestamp_s"]
+    )
+    held_out = np.array([
+        f["timestamp_s"] for k, f in enumerate(geometry_frames)
+        if holdout_geometry_every and (k + 1) % holdout_geometry_every == 0
+    ])  # fmt: skip
+
+    def near_held_out(frame):
+        return (
+            len(held_out) and np.abs(held_out - frame["timestamp_s"]).min() <= holdout_exclusion_s
+        )
+
     extra = [dict(f, name=f"d{k:05d}.jpg") for k, f in enumerate(
-        f for f in candidates if f["frame_id"] not in known
+        f for f in candidates if f["frame_id"] not in known and not near_held_out(f)
     )]  # fmt: skip
 
     # Decode and extract features for the extra frames only.
@@ -202,6 +217,8 @@ def densify(
     report = {
         "base_dir": str(base),
         "frames_per_second": frames_per_second,
+        "holdout_geometry_every": holdout_geometry_every,
+        "holdout_exclusion_s": holdout_exclusion_s,
         "extra_candidates": len(extra),
         "extra_registered": len(poses),
         "median_inliers": float(np.median([s.get("inliers", 0) for s in stats])) if stats else 0,
@@ -219,11 +236,14 @@ def main(argv=None) -> int:
     parser.add_argument("preprocess_dir", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--fps", type=float, default=8.0)
+    parser.add_argument("--holdout-every", type=int, default=0, help="Splat held-out rule")
+    parser.add_argument("--holdout-exclusion-s", type=float, default=0.0)
     parser.add_argument("--device", default="cuda:0")
     args = parser.parse_args(argv)
     report = densify(
         args.base_dir, args.preprocess_dir, args.output_dir,
-        frames_per_second=args.fps, device=args.device,
+        frames_per_second=args.fps, holdout_geometry_every=args.holdout_every,
+        holdout_exclusion_s=args.holdout_exclusion_s, device=args.device,
     )  # fmt: skip
     print({k: report[k] for k in ("extra_candidates", "extra_registered", "median_inliers")})
     return 0

@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "created_at": "2026-10-28T21:24:31.190049+00:00",
+  "created_at": "2026-10-29T16:37:09.620280+00:00",
   "trainer": "src.splatting.sfm_training",
-  "sfm_dir": "/home/utkarsh/namma-space-iitb-vyas/outputs/coorg_bnb/sfm_dense8_fair",
+  "sfm_dir": "/home/utkarsh/namma-space-iitb-vyas/outputs/coorg_bnb/sfm_opencv_dense8",
   "scene_units": "arbitrary (SfM gauge)",
-  "scene_scale": 6.9738658669422176,
-  "scene_extent": 6.9738658669422176,
+  "scene_scale": 7.044142398882078,
+  "scene_extent": 7.044142398882078,
   "camera_convention": "opencv_world_to_camera",
   "pixel_convention": "integer_centers",
   "sfm_splat_config": {
@@ -69,7 +69,7 @@
     "pycolmap": "4.2.1",
     "numpy": "2.4.6"
   },
-  "initial_points": 120706,
+  "initial_points": 120918,
   "train_frame_ids": [
     "coorg_bnb:0",
     "coorg_bnb:7495",
@@ -673,20 +673,12 @@
     "coorg_bnb:6777609",
     "coorg_bnb:6795607",
     "coorg_bnb:6843575",
-    "coorg_bnb:6861563",
-    "coorg_bnb:6873555",
     "coorg_bnb:6876553",
-    "coorg_bnb:6896040",
     "coorg_bnb:6902046",
     "coorg_bnb:6908042",
-    "coorg_bnb:6921533",
-    "coorg_bnb:6932026",
     "coorg_bnb:6951513",
     "coorg_bnb:6953012",
-    "coorg_bnb:6972499",
     "coorg_bnb:6985990",
-    "coorg_bnb:6987489",
-    "coorg_bnb:7008485",
     "coorg_bnb:7011483",
     "coorg_bnb:7029471",
     "coorg_bnb:7035467",
@@ -1789,12 +1781,8 @@
     "coorg_bnb:19286457",
     "coorg_bnb:19298449",
     "coorg_bnb:19305944",
-    "coorg_bnb:19320934",
-    "coorg_bnb:19337433",
     "coorg_bnb:19340431",
     "coorg_bnb:19350924",
-    "coorg_bnb:19371910",
-    "coorg_bnb:19374908",
     "coorg_bnb:19388399"
   ],
   "val_frame_ids": [
@@ -1821,18 +1809,18 @@
   ],
   "initial_camera": {
     "frame_id": "coorg_bnb:0",
-    "width": 1075,
-    "height": 1912,
+    "width": 1066,
+    "height": 1903,
     "intrinsics": [
       [
-        1881.9707486487325,
+        1876.4775787846168,
         0.0,
-        537.0
+        532.5
       ],
       [
         0.0,
-        1881.9707486487325,
-        955.5
+        1875.4955855714356,
+        951.0
       ],
       [
         0.0,
@@ -1842,22 +1830,22 @@
     ],
     "world_to_camera": [
       [
-        0.927520565930148,
-        -0.23690299244611882,
-        0.289106506233762,
-        1.7620802293742777
+        0.8944498161337691,
+        -0.261762084179723,
+        0.3625467386477975,
+        1.924909667267374
       ],
       [
-        0.3696032306600512,
-        0.696522622642193,
-        -0.6150200712442596,
-        -0.3271236487495536
+        0.4452103867481476,
+        0.5970853792406872,
+        -0.6672906124235299,
+        -0.34248469375462937
       ],
       [
-        -0.055669126652671125,
-        0.6772984632477143,
-        0.7335991684973568,
-        1.184414422385504
+        -0.04179997547644754,
+        0.758267539317682,
+        0.6506021064116501,
+        1.064181723252818
       ],
       [
         0.0,

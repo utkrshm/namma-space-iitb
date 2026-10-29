@@ -85,11 +85,25 @@ Held-out frames are utkarsh's 20 validation frames. The table's PSNR columns are
 | Blocks merged by visibility (`blocks/merged_vis`) | – | 24.4* | – |
 | Blocks merged by visibility + 6k-step joint fine-tune (`blocks/merged_finetune`) | 24.6 | 28.3 | 0.91 |
 | + second 10k-step joint fine-tune (`blocks/merged_finetune2`) | 25.5 | 29.0 | 0.91 |
-| **+ 8 frames/s (PnP-registered, `densify_sfm.py`) + depth prior 0.05 (`blocks/merged_dense8_depth`, final)** | **25.6** | **28.3** | **0.91** |
+| + 8 frames/s (PnP-registered, `densify_sfm.py`) + depth prior 0.05 (`blocks/merged_dense8_depth`) | 25.6 | 28.3 | 0.91 |
+| **Moved onto OPENCV-lens cameras (`transfer_splat.py`) + 12k + 8k-step fine-tunes (`opencv/finetune_2`, final)** | **26.3** | **28.6** | **0.90** |
 
 \* Colour-corrected PSNR at half resolution (v6b scores 21.8 on that measure).
 
-The final model is `outputs/coorg_bnb/splat_runs/blocks/merged_dense8_depth`. At full
+The final model is `outputs/coorg_bnb/splat_runs/opencv/finetune_2` (29 Oct 2026).
+
+- *Cameras:* the OPENCV lens model removes most of the entrance floor step of the
+  single-coefficient solve (see [SFM.md](SFM.md#lens-model-opencv-removes-most-of-the-entrance-floor-step-29-oct-2026)).
+- *How it was trained:* the previous final model was moved onto these cameras by
+  point-based local similarities, then fine-tuned for 12k steps (position lr 1.6e-4) and
+  8k steps (4e-5) with the depth prior (`configs/coorg_opencv/`).
+- *Full resolution:* 25.39 dB raw / 27.37 dB colour-corrected, SSIM 0.904 (previous final
+  24.71 / 27.04, 0.907). Off-path floaters 2.48% (2.33%).
+- *Per view* (colour-corrected, half resolution): 12 of 20 views improve, worst 20.3 →
+  21.2 dB, five weakest 23.4 → 24.7 dB. Four strong views lose 1–1.5 dB.
+- *Pruned export:* 491k Gaussians, PSNR unchanged.
+
+The previous final model, `outputs/coorg_bnb/splat_runs/blocks/merged_dense8_depth`. At full
 resolution it scores 24.71 dB raw / 27.04 dB colour-corrected, SSIM 0.91. That is +0.08 raw and
 −0.5 colour-corrected against `merged_finetune2`. Its worst held-out view improves from 13.7 to 19.5 dB, and
 off-path floaters drop from 2.65% to 2.40% of pixels. Dense frames alone gave 24.85 / 27.50 dB with more
@@ -158,10 +172,25 @@ Lessons from the failed runs:
   3. An arc above each room.
   4. An eye-level walkthrough beside the plan, with the current position marked.
 
-  The cut-away views take "up" from a plane fitted to the camera centres and the floor
-  from the densest Gaussian height below the cameras. They hide Gaussians that were never
-  seen from above: those above 1.25 camera heights or below the floor, those far from the
-  path, and huge, faint or needle-shaped ones. The walkthrough renders the full model.
+  The cut-away views take "up" from a plane fitted to the camera centres.
+  - *Floor:* measured locally on a plan grid (`local_floor`), so a floor that is not one
+    plane in the reconstruction is kept. The first tour had one global floor height, and
+    it cut away the entrance (the black hole at 1:09).
+  - *Hidden Gaussians:* those more than 1.25 camera heights above the local floor;
+    reflections in glossy marble, more than 0.05 camera heights below it; those far from
+    the path; huge, faint or needle-shaped ones; and isolated floaters (8th neighbour
+    beyond 0.06 camera heights).
+  - The walkthrough renders the full model.
+- **Moving a splat onto re-solved cameras:**
+  `transfer_splat.py <scene.ply> <old sparse/0> <new sparse/0> --output moved.ply`
+  (`src/splatting/transfer.py`).
+  - *How:* 3D points that share a keypoint in both solves give correspondences. A robust
+    local similarity is fitted around each one (32 neighbours, refitted without
+    outliers). Each Gaussian blends its 4 nearest similarities; covariances are mapped
+    too.
+  - *Then:* a short fine-tune on the new cameras replaces retraining from scratch.
+  - *Coorg* (`sfm_loops2` → `sfm_opencv`): held-out points land within 0.16% of the scene
+    radius (median), 1.4% at p90.
 - **Pruning is free.** Removing Gaussians below 0.02 opacity drops 69% of them with no
   held-out change. The view-independent `.splat` costs about 2.6 dB against the full-SH
   PLY.

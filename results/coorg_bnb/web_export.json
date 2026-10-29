@@ -1,12 +1,12 @@
 {
  "min_opacity": 0.02,
  "gaussians_before": 4040042,
- "gaussians_after": 885092,
- "splat_megabytes": 27.0108642578125,
- "pruned_ply_megabytes": 209.3356580734253,
+ "gaussians_after": 491267,
+ "splat_megabytes": 14.992279052734375,
+ "pruned_ply_megabytes": 116.19162273406982,
  "val_psnr_cc_db": {
-  "full": 27.257751750946046,
-  "pruned": 27.25525712966919,
-  "pruned_view_independent": 23.60249090194702
+  "full": 27.67807502746582,
+  "pruned": 27.676914787292482,
+  "pruned_view_independent": 23.91217975616455
  }
 }

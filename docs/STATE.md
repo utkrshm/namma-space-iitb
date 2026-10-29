@@ -53,6 +53,15 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 
 ## Latest Decision
 
+- **Timestamp:** `29-10-26 17:20:00 IST` (amended 21:50)
+- **Decision:** Solve Coorg's cameras with the OPENCV lens model; move the trained splat
+  onto re-solved cameras (`transfer_splat.py`) and fine-tune; tour video with a local
+  floor.
+- **Reference:** “Flat-floor check, corrected cameras for the entrance, and a robust tour
+  video” in [PLANS.md](PLANS.md).
+
+### Earlier decision
+
 - **Timestamp:** `26-10-26 19:11:38 IST`
 - **Decision:** Add a separate read-only loop-closure stage and compare VGGT loop chunks (A) with bundle adjustment (B) on identical held-out correspondences.
 - **Reference:** “Loop closure for global camera drift (two compared methods)” in [PLANS.md](PLANS.md).
@@ -103,7 +112,24 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
   - Fine-tuning on the dense frames plus the depth prior gives the new final model
     `merged_dense8_depth`. Further gains need a recapture: slower passes at 199–201 s and
     72–80 s, and a loop back from the dining room.
-- **Visual inspection:** `outputs/coorg_bnb/final/heldout_overview.jpg` (real frame |
+- **Entrance floor and tour video (29-10-26, recorded 22:20 IST):**
+  - *Problem:* the user found a black hole in the tour's plan view at 1:09. The
+    single-coefficient lens solve had sunk the foyer and mat-corridor floor
+    0.25–0.3 camera heights, and the tour's one global floor cut it away.
+  - *Tour fix:* the tour measures the floor locally and filters glossy-floor reflections
+    and floaters.
+  - *Camera fix:* cameras re-solved with the OPENCV lens model (`sfm_opencv`, 1.27 px;
+    floor spread 0.144 → 0.059 camera heights), then densified (`sfm_opencv_dense8`,
+    806/826 extra frames).
+  - *New final model `opencv/finetune_2`:* the splat transferred and fine-tuned. Held-out
+    25.39 / 27.37 dB, SSIM 0.904; worst view 20.3 → 21.2 dB (colour-corrected, half
+    resolution); floaters 2.48%.
+  - *Visual inspection:* `results/coorg_bnb/heldout_overview.jpg` (real | previous final |
+    new final) and tour frames at the entrance, orbit and walkthrough. The entrance floor,
+    mat and crocs show in the plan, and the 50 s door floater is gone.
+  - *Failed attempts:* an incremental solve, floor-constrained BA, a piecewise similarity
+    and a split focal length (see [SFM.md](SFM.md)).
+- **Visual inspection (earlier):** `outputs/coorg_bnb/final/heldout_overview.jpg` (real frame |
   VGGT splat | new splat) and `flythrough_frames.jpg` from
   `outputs/coorg_bnb/final/coorg_flythrough.mp4` (1387 frames).
   - Sharp: furniture, curtains, inlays, grilles.

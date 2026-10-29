@@ -37,6 +37,18 @@ def view_splat(*args, **kwargs):
     return implementation(*args, **kwargs)
 
 
+def render_tour(*args, **kwargs) -> dict:
+    from .tour import render_tour as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def transfer_splat(*args, **kwargs) -> dict:
+    from .transfer import transfer_splat as implementation
+
+    return implementation(*args, **kwargs)
+
+
 __all__ = [
     "Camera",
     "RefinedScene",
@@ -48,7 +60,9 @@ __all__ = [
     "load_model",
     "load_scene",
     "load_sfm_scene",
+    "render_tour",
     "train_sfm_splat",
     "train_splat",
+    "transfer_splat",
     "view_splat",
 ]

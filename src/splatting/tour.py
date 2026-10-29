@@ -90,6 +90,48 @@ def look_at(eye: np.ndarray, target: np.ndarray, up: np.ndarray) -> np.ndarray:
     return world_to_camera
 
 
+def local_floor(frame: SceneFrame, means: np.ndarray, opacity: np.ndarray, cell: float = 0.25):
+    """Floor height under each point, from a plan grid (cell size in camera heights).
+
+    A floor that is not one plane in the reconstruction (a step, or drift in the camera
+    solve) would otherwise be cut away where it lies below the global floor estimate.
+    Each cell takes the densest height band of opaque Gaussians well below the cameras; a
+    3 × 3 median removes cells dominated by furniture, and empty cells take the nearest.
+    """
+    camera_height = -frame.floor
+    size = cell * camera_height
+    heights = frame.height(means)
+    low = (opacity > 0.3) & (heights < -0.5 * camera_height)
+    keys = np.floor(frame.plan(means[low]) / size).astype(int)
+    cells, inverse = np.unique(keys, axis=0, return_inverse=True)
+    bins = np.arange(
+        heights[low].min(), heights[low].max() + 0.03 * camera_height, 0.03 * camera_height
+    )
+    floors = {}
+    for index, key in enumerate(map(tuple, cells)):
+        values = heights[low][inverse.ravel() == index]
+        if len(values) >= 10:
+            counts, edges = np.histogram(values, bins=bins)
+            floors[key] = edges[np.argmax(counts)] + (edges[1] - edges[0]) / 2
+    smoothed = {}
+    for (i, j), value in floors.items():
+        near = [
+            floors[(i + a, j + b)]
+            for a in (-1, 0, 1)
+            for b in (-1, 0, 1)
+            if (i + a, j + b) in floors
+        ]
+        smoothed[(i, j)] = float(np.median(near)) if len(near) >= 3 else value
+    centres = (np.array(list(smoothed)) + 0.5) * size
+    values = np.array(list(smoothed.values()))
+    tree = cKDTree(centres)
+
+    def floor_at(points: np.ndarray) -> np.ndarray:
+        return values[tree.query(frame.plan(points))[1]]
+
+    return floor_at
+
+
 def cutaway_mask(
     frame: SceneFrame,
     means: np.ndarray,
@@ -97,21 +139,30 @@ def cutaway_mask(
     opacity: np.ndarray,
     centres: np.ndarray,
     cut_fraction: float = 1.25,
+    floor_at=None,
 ) -> np.ndarray:
     """Gaussians kept in views from above; sizes are fractions of the camera height."""
     camera_height = -frame.floor
+    floor = floor_at(means) if floor_at else frame.floor
     heights = frame.height(means)
     distance, _ = cKDTree(frame.plan(centres)).query(frame.plan(means))
     ordered = np.sort(scales, axis=1)
     needle = ordered[:, 2] / np.maximum(ordered[:, 1], 1e-9)
-    return (
-        (heights < frame.floor + cut_fraction * camera_height)
-        & (heights > frame.floor - 0.15 * camera_height)
+    keep = (
+        (heights < floor + cut_fraction * camera_height)
+        & (heights > floor - 0.05 * camera_height)  # reflections sit below glossy floors
         & (distance < 1.3 * camera_height)
         & (ordered[:, 2] < 0.08 * camera_height)
         & (opacity > 0.1)
         & (needle < 8)
     )
+
+    # Floaters: Gaussians whose 8th-nearest kept neighbour is far away.
+    kept = np.flatnonzero(keep)
+    if len(kept) > 9:
+        spacing, _ = cKDTree(means[kept]).query(means[kept], k=9)
+        keep[kept[spacing[:, 8] > 0.06 * camera_height]] = False
+    return keep
 
 
 @torch.no_grad()
@@ -219,7 +270,10 @@ def render_tour(
     means = params["means"].cpu().numpy()
     opacity = params["opacities"].sigmoid().cpu().numpy()
     frame = scene_frame(camera_to_world, means, opacity)
-    keep = cutaway_mask(frame, means, params["scales"].exp().cpu().numpy(), opacity, centres)
+    floor_at = local_floor(frame, means, opacity)
+    keep = cutaway_mask(
+        frame, means, params["scales"].exp().cpu().numpy(), opacity, centres, floor_at=floor_at
+    )
     keep_t = torch.from_numpy(keep).to(device)
     cutaway = GaussianModel({k: v[keep_t] for k, v in params.items()}, model.sh_degree)
     camera_height = -frame.floor
@@ -304,12 +358,12 @@ def render_tour(
         room_middle = (room_low + room_high) / 2
         target = frame.point(room_middle[0], room_middle[1], frame.floor + 0.3 * camera_height)
         room_reach = 0.5 * np.linalg.norm(room_high - room_low) + 0.5 * camera_height
-        distance = max(1.1 * room_reach / np.tan(np.radians(26)), 3 * camera_height)
+        distance = max(1.1 * room_reach / np.tan(np.radians(26)), 4 * camera_height)
         base = np.arctan2(room_middle[1] - middle[1], room_middle[0] - middle[0])
         t1_label = min(t1, end_time)
         for index in range(count):
             angle = base + np.radians(-50 + 100 * index / max(count - 1, 1))
-            elevation = np.radians(65)
+            elevation = np.radians(70)
             offset = np.cos(angle) * frame.across + np.sin(angle) * frame.side
             eye = target + distance * (np.cos(elevation) * offset + np.sin(elevation) * frame.up)
             image = draw(cutaway, look_at(eye, target, frame.up), k, width, height)

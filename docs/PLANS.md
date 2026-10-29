@@ -14,6 +14,65 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 29-10-26 17:20:00 IST — Flat-floor check, corrected cameras for the entrance, and a robust tour video
+
+- **Status:** Adopted. The tour's floor handling is in place. The cameras are now solved
+  with the OPENCV lens model (amended 29-10-26 21:50 IST; see below).
+- **Amendment (21:50 IST):**
+  - *Approaches that failed:*
+    - The incremental mapper split into three models.
+    - `floor_bundle_adjust.py` flattened the floor only at 2–3 px reprojection error, and
+      plain bundle adjustment returned to the step.
+    - A piecewise shrink of the entrance, followed by bundle adjustment, also returned to
+      the step.
+    - A separate focal length for 0–96 s found the same focal and left the step.
+  - *The approach that worked:* the same GLOMAP pass with `--camera-model OPENCV`. The
+    floor spread falls from 0.144 to 0.059 camera heights. The camera height above the
+    floor at 24–60 s and 96–110 s falls to 1.05× and 1.01× the hall value. Reprojection
+    improves from 1.31 to 1.27 px. The fitted lens has k1 0.082 and k2 −0.216, so the
+    single radial term was the cause.
+  - *Adopted pipeline:*
+    1. `sfm_opencv`.
+    2. `densify_sfm.py --holdout-every 8 --holdout-exclusion-s 0.13`, giving
+       `sfm_opencv_dense8`.
+    3. `transfer_splat.py`: point-based local similarities move the final splat.
+    4. A 12k-step fine-tune with the depth prior
+       (`configs/coorg_opencv/finetune.toml`).
+  - `floor_bundle_adjust.py` stays as a diagnostic: it measures how much reprojection
+    error flattening a floor costs.
+- **Decision:**
+  - The tour's cut-away measures the floor locally on a plan grid instead of using one
+    floor height.
+  - Re-solve the cameras with COLMAP's incremental mapper, on the same verified matches as
+    `sfm_loops2`.
+  - If its floor is flat, move the trained splat onto the new cameras
+    (`src/splatting/transfer.py`) and fine-tune, instead of retraining from scratch.
+- **Rationale and trade-offs:**
+  - *Symptom:* the user saw a black hole in the tour's plan at the entrance (1:09), where
+    the eye-level view shows the mat and crocs.
+  - *Measured cause:* the rendered floor of the bay-window foyer and the mat corridor
+    (24–72 s) lies about 0.4 units (≈0.3 camera heights) below the rest of the house. The
+    global floor cut removed it.
+  - *Why it is a solve error:* the video shows one flat floor. The main door's bottom
+    sits at hall level, and the same mat runs on continuously. Two door heights agree to
+    5% (2.13 vs 2.02 units).
+  - *Size of the error:* camera height above the local sparse floor is 1.2–1.36× the
+    hall value in GLOMAP pass 3, against 2.4× in pass 2 and 3× sequential-only. VGGT shows
+    1.09–1.22×.
+  - *Why the incremental mapper:* it triangulates and bundle-adjusts as it registers each
+    frame, so scale passes through 3D points rather than only through translation
+    directions. That is the usual cure for sag along a weakly looped stretch.
+  - *Why transfer instead of retraining:* retraining the three blocks would take about 6
+    hours. Transfer uses the shared keypoints of both solves: blended per-camera
+    similarities plus point residuals, then a fine-tune.
+- **Affected components:** `src/splatting/tour.py` (`local_floor`, reflection and floater
+  filters), new `src/splatting/transfer.py` and `transfer_splat.py`, and the
+  `outputs/coorg_bnb/sfm_inc` run.
+- **Completion criteria:**
+  - The sparse floor-height ratio is ≈1 in every time window.
+  - Held-out PSNR is not worse than `merged_dense8_depth`.
+  - The tour plan shows the entrance floor.
+
 ## 27-10-26 15:28:36 IST — Dense full-resolution SfM cameras and quality-focused splat training
 
 - **Status:** Adopted (on `feat/dense-sfm-splat`, which merges `feat/LoopClosure` and the

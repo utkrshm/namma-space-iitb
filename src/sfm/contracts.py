@@ -67,6 +67,7 @@ class SfmConfig:
     loop_max_epipolar_px: float = 0.0
 
     # Mapping.
-    camera_model: str = "SIMPLE_RADIAL"
+    # OPENCV (k1, k2, p1, p2): on Coorg a single radial term bent the entrance floor.
+    camera_model: str = "OPENCV"
     mapper: str = "global"  # "global" (GLOMAP) or "incremental"
     min_inliers: int = 25

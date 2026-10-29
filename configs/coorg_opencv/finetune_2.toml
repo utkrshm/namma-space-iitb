@@ -1,0 +1,24 @@
+# Second pass after finetune.toml: the standard small position lr of the joint fine-tunes.
+# image: sfm_opencv_dense8, starting from opencv/finetune/scene.ply; recovers sharpness (SSIM).
+
+[data]
+downscale = 1
+holdout_exclusion_s = 0.0
+
+[training]
+steps = 8000
+sh_degree = 3
+sh_interval = 1
+resolution_schedule = [[0, 1]]
+means_lr = 4e-5
+means_lr_final = 1.6e-6
+pose_start_step = 0
+# Monocular depth prior (outputs of compute_mono_depth.py), as in the final model.
+depth_prior_weight = 0.05
+evaluate_every = 100000
+checkpoint_every = 2500
+
+[refinement]
+max_gaussians = 5000000
+start_step = 100000
+stop_step = 100000

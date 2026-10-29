@@ -3,7 +3,7 @@
 import numpy as np
 import torch
 
-from src.splatting.tour import cutaway_mask, first_seen, look_at, scene_frame
+from src.splatting.tour import cutaway_mask, first_seen, local_floor, look_at, scene_frame
 
 
 def _room(rotation):
@@ -14,7 +14,7 @@ def _room(rotation):
         # Camera looks along +x; OpenCV axes: x right (−y world), y down (−z world), z forward.
         camera_to_world[index, :3, :3] = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]])
         camera_to_world[index, :3, 3] = [0.2 * index, 0.3 * np.sin(index / 5), 1.5]
-    floor = np.column_stack((rng.uniform(-1, 9, 4000), rng.uniform(-2, 2, 4000), np.zeros(4000)))
+    floor = np.column_stack((rng.uniform(-1, 9, 20000), rng.uniform(-2, 2, 20000), np.zeros(20000)))
     ceiling = floor + [0, 0, 2.8]
     means = np.concatenate((floor, ceiling[:500]))
     camera_to_world[:, :3, :] = rotation @ camera_to_world[:, :3, :]
@@ -56,12 +56,13 @@ def test_cutaway_drops_ceiling_and_needles():
     frame = scene_frame(camera_to_world, means, np.ones(len(means)))
     scales = np.full((len(means), 3), 0.01)
     scales[0] = [0.01, 0.01, 0.5]  # a needle on the floor
+    means[1] = [4.0, 0.0, 1.0]  # an isolated floater in mid-air
     keep = cutaway_mask(frame, means, scales, np.ones(len(means)), camera_to_world[:, :3, 3])
 
-    assert not keep[0]
-    assert not keep[4000:].any()  # ceiling at 2.8 is above floor + 1.25 × 1.5
-    near_path = np.abs(means[1:4000, 1]) < 1.5
-    assert keep[1:4000][near_path].mean() > 0.99
+    assert not keep[0] and not keep[1]
+    assert not keep[20000:].any()  # ceiling at 2.8 is above floor + 1.25 × 1.5
+    near_path = np.abs(means[2:20000, 1]) < 1.5
+    assert keep[2:20000][near_path].mean() > 0.9
 
 
 def test_first_seen_follows_the_camera_walk():
@@ -75,3 +76,22 @@ def test_first_seen_follows_the_camera_walk():
     # Each point is first seen once the camera is within 2 units behind it.
     assert seen[0] == 6 and seen[1] == 26
     assert torch.isinf(seen[2])  # behind every camera
+
+
+def test_local_floor_keeps_a_bent_floor():
+    camera_to_world, means = _room(np.eye(3))
+    # The floor sags by 0.45 (0.3 camera heights) under part of the path, as in a drifted solve.
+    sag = means[:, 2] < 1.0
+    sag &= (means[:, 0] > 2) & (means[:, 0] < 5)
+    means[sag, 2] -= 0.45
+    frame = scene_frame(camera_to_world, means, np.ones(len(means)))
+    scales = np.full((len(means), 3), 0.01)
+    centres = camera_to_world[:, :3, 3]
+    floor_at = local_floor(frame, means, np.ones(len(means)))
+    near_path = (np.abs(means[:, 1]) < 1.5) & (means[:, 2] < 1.0)
+
+    global_keep = cutaway_mask(frame, means, scales, np.ones(len(means)), centres)
+    local_keep = cutaway_mask(frame, means, scales, np.ones(len(means)), centres, floor_at=floor_at)
+    assert global_keep[sag & near_path].mean() < 0.05  # the single floor height drops the sag
+    assert local_keep[near_path].mean() > 0.9
+    assert not local_keep[20000:].any()

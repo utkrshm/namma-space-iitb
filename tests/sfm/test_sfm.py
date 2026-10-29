@@ -180,3 +180,8 @@ def test_undistortion_maps_are_identity_without_distortion_and_shift_with_it():
     map_x, _ = undistortion_maps(barrel, pinhole)
     # Positive k pushes off-centre pixels outward in the distorted image; the centre is fixed.
     assert map_x[15, 39] > 39 and abs(map_x[15, 19] - 19) < 0.05
+
+    # OPENCV with only k1 equals SIMPLE_RADIAL with the same k.
+    params = [50, 50, 20, 15, 0.1, 0, 0, 0]
+    opencv = pycolmap.Camera(model="OPENCV", width=40, height=30, params=params)
+    assert np.allclose(undistortion_maps(opencv, pinhole)[0], map_x, atol=1e-4)

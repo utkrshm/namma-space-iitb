@@ -29,14 +29,16 @@ P=outputs/coorg_bnb/preprocessing
 V=outputs/coorg_bnb/loop_closure/method_b_from_baseline/cameras.npz
 export OMP_NUM_THREADS=16 HF_HUB_OFFLINE=1
 
+# Passes 1–2 (and the earlier pass 3, sfm_loops2) used SIMPLE_RADIAL; the final pass 3 uses
+# OPENCV, now the default (see "Lens model" below).
 # 1. Frames, features, all pairs, sequential-only reference (no loops).
 uv run --no-sync python build_sfm.py $P --output-dir outputs/coorg_bnb/sfm_seq \
-  --retrieval-top-k 0 --vggt-cameras $V
+  --retrieval-top-k 0 --vggt-cameras $V --camera-model SIMPLE_RADIAL
 # 2. Loops whose essential-matrix rotation agrees with pass 1 within 10°.
 uv run --no-sync python build_sfm.py $P --output-dir outputs/coorg_bnb/sfm_loops \
-  --loop-reference outputs/coorg_bnb/sfm_seq/sparse/0 --vggt-cameras $V
-# 3. Loops that also fit pass 2's epipolar geometry within 4 px.
-uv run --no-sync python build_sfm.py $P --output-dir outputs/coorg_bnb/sfm_loops2 \
+  --loop-reference outputs/coorg_bnb/sfm_seq/sparse/0 --vggt-cameras $V --camera-model SIMPLE_RADIAL
+# 3. Loops that also fit pass 2's epipolar geometry within 4 px (final cameras).
+uv run --no-sync python build_sfm.py $P --output-dir outputs/coorg_bnb/sfm_opencv \
   --loop-reference outputs/coorg_bnb/sfm_loops/sparse/0 --loop-max-epipolar-px 4 --vggt-cameras $V
 ```
 
@@ -49,9 +51,14 @@ features and matches through symlinks (`images`, `features`, `descriptors.npy`,
 ## Adding frames to a solved model (`densify_sfm.py`)
 
 ```sh
-uv run --no-sync python densify_sfm.py outputs/coorg_bnb/sfm_loops2 outputs/coorg_bnb/preprocessing \
-  --output-dir outputs/coorg_bnb/sfm_dense8 --fps 8
+uv run --no-sync python densify_sfm.py outputs/coorg_bnb/sfm_opencv outputs/coorg_bnb/preprocessing \
+  --output-dir outputs/coorg_bnb/sfm_opencv_dense8 --fps 8 --holdout-every 8 --holdout-exclusion-s 0.13
 ```
+
+`--holdout-every 8 --holdout-exclusion-s 0.13` applies the splat trainer's held-out rule
+(every 8th geometry frame). It adds no extra frame within 0.13 s of a held-out view, so
+those views stay unseen. On `sfm_opencv`, 806 of the 826 remaining extra frames were
+registered.
 
 Frames selected at the higher rate that are not yet solved are matched to their 4 nearest
 registered frames. Keypoints that observe a 3D point give 2D–3D correspondences, and each
@@ -60,6 +67,37 @@ changed. The output is a `src.sfm` hand-off directory: `frames.json`,
 `undistorted/{images,sparse}` and `densify.json`. On Coorg, 834/842 frames were registered
 with a median of 1814 inliers. The previous splat renders these unseen frames as well as its
 training frames (28.87 vs 28.89 dB colour-corrected), so the poses are consistent.
+
+## Lens model: OPENCV removes most of the entrance floor step (29 Oct 2026)
+
+**Symptom.** In the tour video, the plan view showed a black hole at the entrance. With
+one shared SIMPLE_RADIAL camera, pass 3 (`sfm_loops2`) puts the foyer and mat-corridor
+floor (0–96 s) 0.25–0.3 camera heights below the hall floor, with a sharp, straight edge.
+The video shows one flat floor: at 94–98 s the mat lies flush against the hall's marble
+inlay.
+
+**What did not remove it.** In every case below, bundle adjustment returned to the step:
+
+| Attempt | Result |
+| --- | --- |
+| Incremental mapper | Split the house into 3 models (547/96/282 frames); the junction is weakly matched |
+| `floor_bundle_adjust.py`: smooth deformation field + floor-plane term | Flat floor only at 2–3 px reprojection error; plain BA from there returns to the step (1.31 px) |
+| Piecewise similarity shrinking the entrance by 1.3, then BA | Same: back to the step |
+| Separate camera (own focal length) for 0–96 s | Focal 1885 vs 1882 px; step unchanged |
+
+**What did.** The same pass with `--camera-model OPENCV` (`outputs/coorg_bnb/sfm_opencv`):
+
+| Model | Reprojection | Floor spread (camera heights) | Camera height above floor vs hall: 0–24 / 24–60 / 60–96 / 96–110 s | VGGT centre error (median, × radius) |
+| --- | ---: | ---: | --- | ---: |
+| SIMPLE_RADIAL (`sfm_loops2`) | 1.31 px | 0.144 | 1.32 / 1.20 / 1.36 / 1.25 | 0.26 |
+| OPENCV (`sfm_opencv`) | 1.27 px | 0.059 | 1.18 / 1.05 / 1.16 / 1.01 | 0.11 |
+
+- The fitted distortion is strong (k1 0.082, k2 −0.216). A single radial term could only
+  approximate it, so the solve bent the weakly connected entrance instead.
+- The remaining step is about 0.07 camera heights (≈10 cm); it may be a real threshold.
+- At 0–24 s and 60–96 s you film the windows and ceiling, so the camera is plausibly held
+  higher there.
+- Use OPENCV for phone video.
 
 ## Procedure
 
@@ -75,7 +113,8 @@ training frames (28.87 vs 28.89 dB colour-corrected), so the poses are consisten
    agree with the reference trajectory, and optionally its matches must fit the
    reference's epipolar geometry.
 4. **Mapping:** COLMAP verification, then the GLOMAP global mapper, with one shared
-   SIMPLE_RADIAL camera. The result is undistorted to PINHOLE.
+   OPENCV camera (the default since 29 Oct; `--camera-model SIMPLE_RADIAL` for the
+   earlier runs). The result is undistorted to PINHOLE.
 5. **Report:** `report.json` records:
    - registration and reprojection error;
    - `continuity`: impossible jumps or turns between consecutive frames;

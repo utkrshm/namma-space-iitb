@@ -314,7 +314,9 @@ views with sub-pixel cameras at full resolution, so this stage solves its own ca
   features at 1600 px feed LightGlue on sequential pairs (±8 frames). DINOv2 retrieval
   pairs more than 4 s apart are kept only with ≥60 non-planar epipolar inliers. COLMAP
   verification, then the pycolmap global mapper (GLOMAP), with one shared
-  SIMPLE_RADIAL camera. The result is undistorted to PINHOLE.
+  OPENCV camera (SIMPLE_RADIAL bent the Coorg entrance floor). The result is undistorted
+  to PINHOLE. `densify` registers extra frames by PnP; `floor_ba` measures what
+  flattening a floor costs in reprojection (diagnostic).
 - **Output:** `frames.json`, `images/`, `sparse/<k>/`, and `undistorted/{images,sparse}`
   (the splatting hand-off). Also `report.json` (registration, reprojection error and VGGT
   comparison after a Sim(3)) and `inspection/topdown.png`. Contract details are in
@@ -360,7 +362,10 @@ Large captures are trained as time blocks of one SfM model (`time_range_s`, glob
 holdout). `merge_blocks` gives each Gaussian to the block whose cameras observe its
 position best (Σ 1/depth²). A short joint fine-tune (`--initial-ply`, no densification)
 then removes cross-block floaters. `web_export` prunes near-transparent Gaussians and writes
-a 32-byte-per-Gaussian `.splat`; `flythrough` renders a smoothed trajectory video.
+a 32-byte-per-Gaussian `.splat`; `flythrough` renders a smoothed trajectory video, and
+`tour` a whole-model video (build-up, cut-away orbit, rooms, walkthrough with plan).
+`transfer` moves a trained splat onto re-solved cameras of the same images (local
+similarities from shared 3D points), for a fine-tune instead of retraining.
 
 ### Scene geometry: mesh / TSDF
 

@@ -1,0 +1,26 @@
+# Fine-tune of the final splat after moving it onto the OPENCV-lens cameras (transfer_splat.py).
+# image: sfm_opencv_dense8 (8 frames/s; no extra frames within 0.13 s of a held-out view).
+# The position lr starts 4x higher than in the earlier joint fine-tunes, so Gaussians that the
+# transfer placed slightly off (lens change, residual warp error) can settle; no densification.
+
+[data]
+downscale = 1
+holdout_exclusion_s = 0.0
+
+[training]
+steps = 12000
+sh_degree = 3
+sh_interval = 1
+resolution_schedule = [[0, 1]]
+means_lr = 1.6e-4
+means_lr_final = 1.6e-6
+pose_start_step = 0
+# Monocular depth prior (outputs of compute_mono_depth.py), as in the final model.
+depth_prior_weight = 0.05
+evaluate_every = 100000
+checkpoint_every = 2500
+
+[refinement]
+max_gaussians = 5000000
+start_step = 100000
+stop_step = 100000
