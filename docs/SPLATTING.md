@@ -150,6 +150,18 @@ Lessons from the failed runs:
     capture path matters more than accuracy near it.
 - **Fly-through video:** `render_flythrough.py <scene.ply> <sfm_dir> --output x.mp4`
   follows the capture path, with smoothed centres and slerped rotations.
+- **Whole-model tour video:** `render_tour.py <scene.ply> <run_dir> --output tour.mp4`
+  (`src/splatting/tour.py`, H.264 through PyAV) shows the model from outside as well as
+  along the path. It has four parts:
+  1. A top-down build-up: each Gaussian appears when a capture camera first sees it.
+  2. A 360° orbit with the ceiling cut away.
+  3. An arc above each room.
+  4. An eye-level walkthrough beside the plan, with the current position marked.
+
+  The cut-away views take "up" from a plane fitted to the camera centres and the floor
+  from the densest Gaussian height below the cameras. They hide Gaussians that were never
+  seen from above: those above 1.25 camera heights or below the floor, those far from the
+  path, and huge, faint or needle-shaped ones. The walkthrough renders the full model.
 - **Pruning is free.** Removing Gaussians below 0.02 opacity drops 69% of them with no
   held-out change. The view-independent `.splat` costs about 2.6 dB against the full-SH
   PLY.

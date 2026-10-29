@@ -14,6 +14,7 @@ How it was made: [docs/SFM.md](../../docs/SFM.md) and [docs/SPLATTING.md](../../
 | `scene.splat` | The same Gaussians in the 32-byte web format (view-independent colour, 27 MB) for browser viewers. |
 | `coorg_flythrough.mp4` | 1387-frame smoothed fly-through along the capture path, rendered entirely from the splat. |
 | `flythrough_frames.jpg` | Seven frames sampled from the fly-through. |
+| `coorg_tour.mp4` | 140 s tour of the whole model (H.264, 1920×1080), in four parts: (1) a top-down build-up as the camera walks; (2) a 360° orbit with the ceiling cut away; (3) an arc above the entrance, living hall and dining room; (4) an eye-level walkthrough beside the plan, with the current position marked. Made with `render_tour.py`. |
 | `heldout_overview.jpg`, `heldout/` | Frames held out from training: real video, the previous VGGT splat and the new splat. |
 | `metrics.json`, `web_export.json` | Held-out metrics of the trained model and of the pruned export. |
 | `cameras.json` | All 1,745 cameras (OpenCV world-to-camera, refined training poses), usable with `render_gaussian_splat.py`. |

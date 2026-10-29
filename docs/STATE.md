@@ -48,7 +48,7 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 | Gaussian splatting (`src/splatting`) | Implemented (awaiting verification on development server) |
 | Shared rendering and Python/Viser viewer | Implemented (awaiting verification on development server) |
 | Dense full-resolution SfM (`src/sfm/`) | Verified on Coorg: 927/927 frames, 1.31 px, loops checked by rotation and epipolar fit |
-| SfM-input splatting, block merge, web export, fly-through (`src/splatting/sfm_*`, `merge_blocks`, `web_export`, `flythrough`) | Verified on Coorg: held-out 23.9/27.0 dB, SSIM 0.91; visually inspected |
+| SfM-input splatting, block merge, web export, fly-through, tour video (`src/splatting/sfm_*`, `merge_blocks`, `web_export`, `flythrough`, `tour`) | Verified on Coorg: held-out 23.9/27.0 dB, SSIM 0.91; visually inspected |
 | Surface reconstruction, scene understanding and navigation | Planned |
 
 ## Latest Decision
