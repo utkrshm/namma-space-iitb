@@ -122,4 +122,5 @@ clip_seconds = 4.5
 walk_speed = 0.4
 crossfade_seconds = 0.5
 reel_fov_deg = 70.0
+turns = false
 turn_seconds = 12.0

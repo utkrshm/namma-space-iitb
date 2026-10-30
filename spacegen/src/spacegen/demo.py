@@ -2,12 +2,13 @@
 
 1. **Build-up (sped up):** a fixed view from above with the ceiling cut away. Gaussians
    appear when the capture camera that first saw them arrives, so the space assembles
-   camera pose by camera pose. The walked path is drawn as it grows, and the current
-   camera is drawn as a small frustum.
+   camera pose by camera pose. Generated (filled) Gaussians are left out: seen from
+   above they add haze, and this view is meant to show what was captured. The walked
+   path is drawn as it grows, and the current camera is drawn as a small frustum.
 2. **Highlight reel:** eye-level clips along the smoothed capture path. Candidate windows
    are scored on low-resolution renders by sharpness × measured share × rendered share,
-   and the best non-overlapping ones are joined with crossfades. A filled model
-   (`spacegen.fill`) adds one 360° turn per area.
+   and the best non-overlapping ones are joined with crossfades. With ``demo.turns`` a
+   filled model (`spacegen.fill`) adds one 360° turn per area.
 
 Output: ``<run>/demo/demo.mp4`` (H.264) and ``demo.json`` (chosen clips and their scores).
 """
@@ -122,7 +123,10 @@ def render_demo(run: Path, config: DemoConfig, device: str, log) -> dict:
 
     # 1. Build-up from above, camera by camera.
     centres_aligned = frame.to_aligned(np.stack([c.centre for c in train]))
-    overview = cutaway(model, frame, centres_aligned)
+    overview = model
+    if "filled" in model.extras:
+        overview = model.subset(~model.extras["filled"].reshape(-1).bool())
+    overview = cutaway(overview, frame, centres_aligned)
     seen = first_seen(overview.params["means"].detach(), train, 3.0 * height_unit)
     low = np.percentile(centres_aligned[:, :2], 1, axis=0) - 0.6
     high = np.percentile(centres_aligned[:, :2], 99, axis=0) + 0.6
@@ -184,7 +188,8 @@ def render_demo(run: Path, config: DemoConfig, device: str, log) -> dict:
     scores = []
     for start in starts:
         values = []
-        for t in (0.15, 0.5, 0.85):
+        # Seven moments including both ends: smears near walls often last under a second.
+        for t in ease(np.linspace(0, 1, 7)):
             small = Camera(
                 "probe",
                 320,
@@ -199,7 +204,7 @@ def render_demo(run: Path, config: DemoConfig, device: str, log) -> dict:
             sharp = float(cv2.Laplacian(gray, cv2.CV_32F).var())
             rendered = float((alpha > 0.9).float().mean())
             measured = float(((fraction > 0.5) & (small_alpha > 0.5)).float().mean())
-            values.append(sharp * rendered**4 * (0.3 + 0.7 * measured))
+            values.append(sharp * rendered**4 * measured**2)
         scores.append(float(np.min(values)))  # a clip is as good as its worst moment
     chosen: list[float] = []
     for index in np.argsort(scores)[::-1]:
@@ -228,9 +233,9 @@ def render_demo(run: Path, config: DemoConfig, device: str, log) -> dict:
             )
         previous = _crossfade(writer, previous, frames, fade)
 
-    # 3. With a filled model, one 360° turn per area (every direction has content).
+    # 3. Optionally, with a filled model, one 360° turn per area.
     turns = []
-    if filled:
+    if filled and config.turns:
         from .fill import standing_points
 
         for stand in standing_points(frame, cameras):

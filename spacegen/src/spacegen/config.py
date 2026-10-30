@@ -179,6 +179,9 @@ class DemoConfig:
     walk_speed: float = 0.4
     crossfade_seconds: float = 0.5
     reel_fov_deg: float = 70.0
+    # One 360° turn per area after the reel (filled models only). Off by default: a turn
+    # faces walls the capture never saw, and generated content looks worst there.
+    turns: bool = False
     turn_seconds: float = 12.0
 
 

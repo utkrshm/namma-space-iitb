@@ -44,7 +44,7 @@ These are also in `spacegen/contracts.py`.
 | splat | `splat_stage.py`, `splat/`, `partition.py` | `Solution`, depth | `scene.ply` (3DGS layout, SH degree 3), `cameras.json` (refined train poses; `split` = train/val), `metrics.json` (held-out PSNR/SSIM/LPIPS and `psnr_cc`), `checkpoint.pt` (including per-image `corrections`). |
 | fill | `fill.py`, `support.py`, `scene_frame.py` | `splat/`, `sfm/` | `fill/scene.ply` adds `filled` (u1) and `support_0/1` (u32) properties. `fill.json` gives probes, hole shares before and after, generated share, and held-out scores after filling. |
 | tour | `tour.py` | `fill/` or `splat/`, `scene_frame.json` | `tour.mp4` (H.264 yuv420p, `tour.width` × `tour.height`) and `tour.json` (sections; per section, the mean shares of unrendered (alpha < 0.9), unmeasured and near-camera pixels). |
-| demo | `demo.py` | as tour | `demo.mp4`: a top-down build-up in which each Gaussian appears at the first capture camera that sees it, with the path and current frustum drawn, then the highlight clips with the best min-over-clip score (sharpness × rendered⁴ × measured), then 360° turns if the model is filled. `demo.json` lists the clips and scores. |
+| demo | `demo.py` | as tour | `demo.mp4`: a top-down build-up in which each Gaussian appears at the first capture camera that sees it, with the path and current frustum drawn, then the highlight clips with the best min-over-clip score over 7 moments (sharpness × rendered⁴ × measured²). Generated Gaussians are left out of the build-up. `demo.turns` adds 360° turns for a filled model. `demo.json` lists the clips and scores. |
 
 ## Held-out split
 
