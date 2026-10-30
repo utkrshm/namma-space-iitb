@@ -31,6 +31,9 @@ def normalized_points(model, image, xy: np.ndarray) -> np.ndarray:
         k = camera.calibration_matrix()
         distortion = np.zeros(4)
     shifted = (xy + 0.5).reshape(-1, 1, 2).astype(np.float64)  # COLMAP pixel centres
+    if camera.model.name == "OPENCV_FISHEYE":
+        k = np.array([[params[0], 0, params[2]], [0, params[1], params[3]], [0, 0, 1]])
+        return cv2.fisheye.undistortPoints(shifted, k, np.array(params[4:8])).reshape(-1, 2)
     return cv2.undistortPoints(shifted, k, distortion).reshape(-1, 2)
 
 

@@ -24,14 +24,17 @@ Each row is a failure, its cause, and the stage that handles it.
 | --- | --- | --- |
 | False loops | Repeated grilles, tiles and identical doors match between different places. On Coorg, 10–20% of retrieval pairs were wrong by 100–180°, and the global mapper folded the house. | Retrieval pairs need 60 epipolar inliers, and a single homography may explain at most 70% of them (repeats are mostly planar). For video, a solve with only sequential pairs is made first, and a loop is kept only if its relative rotation agrees within 10°. Loops that join separate sequential models need twice the inliers. |
 | Drift without loops | Long walks. | Retrieval pairs (DINOv2 global descriptors) close true loops. Per-image pose refinement during splatting takes up the remaining error. |
+| "Registered" cameras with no points | GLOMAP can register an image that observes no triangulated points; its pose is then arbitrary. On playroom one camera sat 870 units away in an 8-unit room. | `load_solution` leaves out images with fewer than 30 points. |
 | Blank walls break tracking | No features. | Retrieval links the frames across the gap. If the global mapper registers less than 90% of frames, the incremental mapper is tried as well and the better result is kept. |
 
 ## Splat training
 
 | Problem | Cause | What spacegen does |
 | --- | --- | --- |
+| One outlier camera wrecks training | The scene radius scales the position learning rate, MCMC noise and the scale clamp. Taken as the *maximum* camera distance, a single bad camera made it about 100× too large; playroom held-out PSNR fell to 22 dB, with fog. | The radius is the 95th-percentile camera distance from the median centre. |
 | Fog, everything soft | MCMC position noise is lr × covariance in world units. gsplat assumes a scene radius of about 1, and Coorg's 11 made the noise about 120× too strong. | The noise lr is divided by radius². |
 | Near-camera floaters, out of memory | Gaussians in front of a camera grow over thousands of tiles. | Screen-size pruning: a Gaussian wider than 15% of the image is handed to MCMC relocation. |
+| Monocular-depth seed points | Each image's depth map is fitted to SfM points separately, so some seeds land in free space; they grew into blobs in front of other cameras (playroom: 11.9 dB against 21.9 dB at 6k steps). | Off by default (`splat.depth_seed_points = 0`). A safe version would keep only seeds consistent across several views. |
 | Huge or needle Gaussians | Unbounded scales. | Scales are clamped to 10% of the scene extent, with an MCMC scale regularizer. |
 | Blank walls and ceilings have no shape; glossy floors | Photometric loss is flat on textureless surfaces. | Monocular depth (Depth Anything V2 Small) with a patch-wise Pearson loss that fades to zero by step 15k. A constant weight cost 0.4 dB on Coorg; early shape followed by photometric detail does not. |
 | Reflections (mirrors, glass, polished floors) | A mirror image is consistent virtual geometry *behind* the mirror. View-dependent colour needs high-order SH. | SH degree 3; on Coorg, degree 0 lost 3.7 dB. The depth prior is faded out, so it does not fight the virtual geometry. |

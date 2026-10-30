@@ -153,28 +153,40 @@ def match_pairs(cache: Path, features: list[dict], pairs, config: SfmConfig, dev
             }
         return on_device[index]
 
-    matches, listing = {}, []
-    with torch.inference_mode():
+    from concurrent.futures import ThreadPoolExecutor
+
+    def gate(record, pair_matches):
+        # The epipolar/homography check runs on the CPU (OpenCV releases the GIL), so it
+        # overlaps with GPU matching of the next pairs.
+        i, j = record["i"], record["j"]
+        if record["kind"] == "retrieval":
+            xy_a = features[i]["keypoints"][pair_matches[:, 0]]
+            xy_b = features[j]["keypoints"][pair_matches[:, 1]]
+            inliers, planar = planar_fraction(xy_a, xy_b, config.ransac_px)
+            record.update(fundamental_inliers=inliers, planar_fraction=planar)
+            record["accepted"] = bool(
+                inliers >= config.retrieval_min_inliers
+                and planar <= config.retrieval_max_planar_fraction
+            )
+        else:
+            record["accepted"] = bool(len(pair_matches) >= config.min_inliers)
+        return record, pair_matches
+
+    jobs = []
+    with torch.inference_mode(), ThreadPoolExecutor(8) as pool:
         for number, (i, j, kind) in enumerate(pairs):
             if number % 2000 == 0:
                 print(f"matching pair {number}/{len(pairs)}", flush=True)
             result = matcher({"image0": tensors(i), "image1": tensors(j)})
             pair_matches = result["matches"][0].cpu().numpy().astype(np.uint32)
             record = {"i": i, "j": j, "kind": kind, "raw_matches": len(pair_matches)}
-            if kind == "retrieval":
-                xy_a = features[i]["keypoints"][pair_matches[:, 0]]
-                xy_b = features[j]["keypoints"][pair_matches[:, 1]]
-                inliers, planar = planar_fraction(xy_a, xy_b, config.ransac_px)
-                record.update(fundamental_inliers=inliers, planar_fraction=planar)
-                record["accepted"] = bool(
-                    inliers >= config.retrieval_min_inliers
-                    and planar <= config.retrieval_max_planar_fraction
-                )
-            else:
-                record["accepted"] = bool(len(pair_matches) >= config.min_inliers)
-            if record["accepted"]:
-                matches[(i, j)] = pair_matches
-            listing.append(record)
+            jobs.append(pool.submit(gate, record, pair_matches))
+    matches, listing = {}, []
+    for job in jobs:
+        record, pair_matches = job.result()
+        if record["accepted"]:
+            matches[(record["i"], record["j"])] = pair_matches
+        listing.append(record)
 
     np.savez(matches_path, **{f"{i}-{j}": value for (i, j), value in matches.items()})
     listing_path.write_text(json.dumps(listing) + "\n")

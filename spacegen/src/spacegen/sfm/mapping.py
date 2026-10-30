@@ -20,7 +20,7 @@ def camera_params(width: int, height: int, model: str) -> str:
     focal = 1.2 * max(width, height)
     if model == "SIMPLE_RADIAL":
         return f"{focal},{width / 2},{height / 2},0"
-    if model == "OPENCV":
+    if model in ("OPENCV", "OPENCV_FISHEYE"):
         return f"{focal},{focal},{width / 2},{height / 2},0,0,0,0"
     if model == "PINHOLE":
         return f"{focal},{focal},{width / 2},{height / 2}"

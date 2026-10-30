@@ -10,7 +10,7 @@
 
 Frames are rendered at ``supersample`` × the output size and area-downsampled, so fine
 patterns (tiles, grilles) do not flicker. Output: ``<run>/tour/tour.mp4`` (H.264,
-yuv420p) and ``tour.json`` (sections, frame counts, unrendered share per section).
+yuv420p) and ``tour.json`` (sections, frame counts and the quality checks of `Renderer`).
 """
 
 from __future__ import annotations
@@ -84,24 +84,77 @@ def label(rgb: np.ndarray, text: str) -> np.ndarray:
 
 
 class Renderer:
-    def __init__(self, model: GaussianModel, config: TourConfig, fov_deg: float, near: float):
+    """Supersampled frames plus quality checks on every ``check_every``-th frame:
+
+    - ``unrendered``: share of pixels with alpha < 0.9 (they show black);
+    - ``unmeasured``: share of rendered pixels that no capture camera saw from a nearby
+      direction, i.e. generated (filled) or unsupported content (needs ``support``);
+    - ``near``: share of pixels closer than 0.1 camera heights (floaters on the lens).
+    """
+
+    def __init__(
+        self,
+        model,
+        config: TourConfig,
+        fov_deg: float,
+        near: float,
+        camera_height: float,
+        background=None,
+    ):
         self.model, self.config, self.near = model, config, near
+        self.background = (
+            None
+            if background is None
+            else torch.tensor(background, dtype=torch.float32, device=model.device)
+        )
+        self.camera_height = camera_height
         self.width = round(config.width * config.supersample)
         self.height = round(config.height * config.supersample)
         self.k = _intrinsics(self.width, self.height, fov_deg)
-        self.unrendered: list[float] = []
+        self.frames = 0
+        self.checks: dict[str, list[float]] = {"unrendered": [], "unmeasured": [], "near": []}
+
+    def reset(self) -> None:
+        self.checks = {key: [] for key in self.checks}
+
+    def summary(self) -> dict:
+        return {key: float(np.mean(v)) if v else None for key, v in self.checks.items()}
 
     @torch.no_grad()
-    def __call__(
-        self, world_to_camera: np.ndarray, model: GaussianModel | None = None
-    ) -> np.ndarray:
+    def __call__(self, world_to_camera: np.ndarray) -> np.ndarray:
         camera = Camera("tour", self.width, self.height, self.k, world_to_camera)
-        rgb, _, alpha, _ = render_camera(model or self.model, camera, near_plane=self.near)
-        self.unrendered.append(float((alpha < 0.5).float().mean()))
+        rgb, depth, alpha, _ = render_camera(
+            self.model, camera, near_plane=self.near, background=self.background
+        )
+        if self.frames % self.config.check_every == 0 and self.background is None:
+            self.checks["unrendered"].append(float((alpha < 0.9).float().mean()))
+            near = (depth < 0.1 * self.camera_height) & (alpha > 0.5)
+            self.checks["near"].append(float(near.float().mean()))
+            if "support" in self.model.extras:
+                small = camera.resized(self.width // 4, self.height // 4)
+                fraction, small_alpha, _ = measured_support(self.model, small)
+                rendered = small_alpha > 0.5
+                if rendered.any():
+                    self.checks["unmeasured"].append(
+                        float((fraction[rendered] < 0.5).float().mean())
+                    )
+        self.frames += 1
         image = (rgb.clamp(0, 1) * 255).round().byte().cpu().numpy()
         return cv2.resize(
             image, (self.config.width, self.config.height), interpolation=cv2.INTER_AREA
         )
+
+
+def measured_support(model, camera):
+    """Support map counting only captured (not ``filled``) Gaussians."""
+    support = model.extras["support"]
+    filled = model.extras.get("filled")
+    if filled is not None:
+        model.extras["support"] = torch.where(filled.bool(), torch.zeros_like(support), support)
+    try:
+        return support_map(model, camera, 35.0)
+    finally:
+        model.extras["support"] = support
 
 
 def cutaway(model: GaussianModel, frame: SceneFrame, centres_aligned: np.ndarray) -> GaussianModel:
@@ -110,7 +163,7 @@ def cutaway(model: GaussianModel, frame: SceneFrame, centres_aligned: np.ndarray
     aligned = frame.to_aligned(model.params["means"].detach().cpu().numpy())
     distance, _ = cKDTree(centres_aligned[:, :2]).query(aligned[:, :2])
     scale = model.params["scales"].detach().exp().max(1).values.cpu().numpy() / frame.camera_height
-    keep = (aligned[:, 2] < 1.15) & (aligned[:, 2] > -0.3) & (distance < 2.5) & (scale < 0.5)
+    keep = (aligned[:, 2] < 1.15) & (aligned[:, 2] > -0.3) & (distance < 1.6) & (scale < 0.5)
     return model.subset(torch.from_numpy(keep).to(model.device))
 
 
@@ -125,6 +178,11 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
     filled = (run / "fill" / "scene.ply").exists()
     model = load_ply(run / ("fill" if filled else "splat") / "scene.ply", device)
     cameras, splits = load_cameras(run / "splat" / "cameras.json")
+    if "support" not in model.extras:
+        from .support import compute_support
+
+        train_cameras = [c for c, split in zip(cameras, splits, strict=True) if split == "train"]
+        model.extras["support"] = compute_support(model, train_cameras)
     if (run / "scene_frame.json").exists():
         frame = SceneFrame.load(run / "scene_frame.json")
     else:
@@ -142,14 +200,15 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
     # 1. Overview orbit with the ceiling cut away.
     overview = cutaway(model, frame, centres)
     fov = 50.0
-    renderer = Renderer(overview, config, fov, 0.01)
-    kept = frame.to_aligned(overview.params["means"].detach().cpu().numpy())
-    low, high = np.percentile(kept[:, :2], [3, 97], axis=0)
+    renderer = Renderer(overview, config, fov, 0.01, frame.camera_height, (0.13, 0.13, 0.15))
+    # Frame the walked area plus a margin (Gaussian percentiles include outer floaters).
+    low = np.percentile(centres[:, :2], 2, axis=0) - 0.5
+    high = np.percentile(centres[:, :2], 98, axis=0) + 0.5
     middle = np.array([(low[0] + high[0]) / 2, (low[1] + high[1]) / 2, 0.3])
-    # Far enough that the whole cut-away footprint fits the (vertical) field of view.
-    half = 0.5 * float(np.linalg.norm(high - low))
+    # Far enough that the footprint's longer side fills most of the (vertical) view.
+    half = 0.5 * float(np.max(high - low))
     vertical = math.atan(math.tan(math.radians(fov) / 2) * config.height / config.width)
-    distance = 1.15 * half / math.tan(vertical) + half
+    distance = 1.05 * half / math.tan(vertical)
     elevation = math.radians(55)
     count = int(config.look_seconds * 1.4 * fps)
     for number in range(count):
@@ -168,7 +227,7 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
         {
             "name": "overview",
             "frames": count,
-            "unrendered_mean": float(np.mean(renderer.unrendered)),
+            "checks": renderer.summary(),
         }
     )
     del overview
@@ -178,9 +237,9 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
     from .fill import standing_points
 
     stands = standing_points(frame, cameras)
-    renderer = Renderer(model, config, 75.0, 0.15 * frame.camera_height)
+    renderer = Renderer(model, config, 75.0, 0.15 * frame.camera_height, frame.camera_height)
     for stand in stands:
-        renderer.unrendered = []
+        renderer.reset()
         eye = frame.to_world(np.array(stand["eye_aligned"])[None])[0]
         start = _heading(cameras[stand["camera"]], frame)
         frames = int(config.look_seconds * fps)
@@ -199,12 +258,12 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
             {
                 "name": f"look-around {stand['area']}",
                 "frames": len(yaws),
-                "unrendered_mean": float(np.mean(renderer.unrendered)),
+                "checks": renderer.summary(),
             }
         )
 
     # 3. Walkthrough along the smoothed capture path (training cameras, capture order).
-    renderer.unrendered = []
+    renderer.reset()
     train = [i for i, split in enumerate(splits) if split == "train"]
     path = np.stack([cameras[i].centre for i in train])
     forward = np.stack([cameras[i].camera_to_world[:3, 2] for i in train])
@@ -228,7 +287,7 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
         {
             "name": "walkthrough",
             "frames": frames,
-            "unrendered_mean": float(np.mean(renderer.unrendered)),
+            "checks": renderer.summary(),
         }
     )
     writer.close()
@@ -242,8 +301,8 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
     }
     write_json(output / "tour.json", report)
     log(
-        f"tour: {report['seconds']:.0f}s, unrendered share per section "
-        f"{[(s['name'], round(s['unrendered_mean'], 4)) for s in sections]}"
+        f"tour: {report['seconds']:.0f}s, checks per section "
+        f"{[(s['name'], s['checks']) for s in sections]}"
     )
     return report
 

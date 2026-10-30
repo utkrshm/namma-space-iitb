@@ -136,3 +136,17 @@ def test_fibonacci_directions_cover_the_sphere():
     probes /= np.linalg.norm(probes, axis=1, keepdims=True)
     worst = np.degrees(np.arccos((probes @ directions.T).max(1))).max()
     assert worst < 20  # every direction is within 20° of a bin
+
+
+def test_split_holes_fills_slivers_and_flags_large_regions():
+    from spacegen.fill import split_holes
+
+    rgb = np.zeros((100, 120, 3), np.uint8)
+    rgb[:, :60] = (200, 40, 40)
+    rgb[:, 60:] = (40, 40, 200)
+    hole = np.zeros((100, 120), bool)
+    hole[10:90, 30] = True  # a thin sliver inside the red half
+    hole[40:80, 80:115] = True  # a large block in the blue half
+    base, large = split_holes(rgb, hole, 0.01)
+    assert not large[:, 30].any() and large[40:80, 80:115].all()
+    assert np.abs(base[10:90, 30].astype(int) - (200, 40, 40)).max() < 10

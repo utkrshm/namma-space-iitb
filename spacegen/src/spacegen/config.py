@@ -49,8 +49,11 @@ class SfmConfig:
     loop_max_rotation_deg: float = 10.0
     camera_model: str = "OPENCV"
     mapper: str = "global"  # "global" (GLOMAP) or "incremental"
-    # Retry with the other mapper when fewer than this share of frames register.
+    # Retry with the other mapper, then a fisheye lens model, when fewer than this share of
+    # frames register or the mean reprojection error is above max_reprojection_px.
     min_registered_fraction: float = 0.9
+    max_reprojection_px: float = 1.6
+    fisheye_fallback: bool = True
 
 
 @dataclass(frozen=True)
@@ -89,8 +92,10 @@ class SplatConfig:
     appearance_lr: float = 1e-3
     appearance_regularization: float = 1e-3
     depth_prior_weight: float = 0.1
-    # Extra seed points from monocular depth fitted to the SfM points (0 disables).
-    depth_seed_points: int = 150_000
+    # Extra seed points from monocular depth fitted to the SfM points (0 disables). Off by
+    # default: on playroom, per-image fits put seeds in free space, where they grew into
+    # blobs in front of other cameras (held-out 11.9 dB against 21.9 dB at 6k steps).
+    depth_seed_points: int = 0
     depth_prior_until: int = 15_000
     random_background: bool = False
     rasterize_mode: str = "antialiased"
@@ -152,6 +157,8 @@ class TourConfig:
     crf: int = 20
     look_seconds: float = 14.0
     walk_seconds_per_metre: float = 1.2
+    # Quality checks (unrendered, unmeasured, near-floater shares) on every Nth frame.
+    check_every: int = 10
 
 
 @dataclass(frozen=True)

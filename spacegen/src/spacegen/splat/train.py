@@ -143,7 +143,7 @@ class Priors:
     """Monocular inverse depth per image, loaded lazily."""
 
     def __init__(self, folder: Path, paths: list[Path]):
-        self.paths = [folder / (p.stem + ".npy") for p in paths]
+        self.paths = [Path(folder) / (p.stem + ".npy") for p in paths]
         self.cache: dict[int, torch.Tensor] = {}
 
     def get(self, index: int, device) -> torch.Tensor | None:
@@ -162,13 +162,19 @@ def split_indices(count: int, holdout_every: int) -> tuple[list[int], list[int]]
 
 
 def scene_radius(cameras: list[Camera]) -> float:
+    """1.1 × the 95th-percentile camera distance from the median camera centre.
+
+    A percentile, not the maximum: one badly registered camera must not scale every
+    learning rate and the MCMC noise.
+    """
     centres = np.stack([c.centre for c in cameras])
-    return max(1.1 * float(np.linalg.norm(centres - centres.mean(0), axis=1).max()), 1e-3)
+    distance = np.linalg.norm(centres - np.median(centres, axis=0), axis=1)
+    return max(1.1 * float(np.percentile(distance, 95)), 1e-3)
 
 
 def scene_extent(cameras: list[Camera], points: np.ndarray) -> float:
     centres = np.stack([c.centre for c in cameras])
-    distance = np.linalg.norm(points - centres.mean(0), axis=1) if len(points) else [0]
+    distance = np.linalg.norm(points - np.median(centres, axis=0), axis=1) if len(points) else [0]
     return max(scene_radius(cameras), float(np.percentile(distance, 90)))
 
 

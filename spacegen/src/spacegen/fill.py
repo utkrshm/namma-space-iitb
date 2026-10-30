@@ -79,6 +79,15 @@ def probe_camera(frame: SceneFrame, eye_aligned, yaw_deg, pitch_deg, width, heig
     return Camera(name, width, height, k, look_at(eye, target, frame.up))
 
 
+def split_holes(rgb: np.ndarray, hole: np.ndarray, large_share: float):
+    """Fill every hole from its border (Telea); return that image and the mask of holes
+    covering at least ``large_share`` of the view, which need a generative model."""
+    base = cv2.inpaint(rgb, hole.astype(np.uint8), 5, cv2.INPAINT_TELEA)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(hole.astype(np.uint8))
+    big = [i for i in range(1, count) if stats[i, cv2.CC_STAT_AREA] >= large_share * hole.size]
+    return base, np.isin(labels, big)
+
+
 class Inpainter:
     """SDXL inpainting at about 1024 px; known pixels are pasted back with a soft seam."""
 
@@ -97,12 +106,7 @@ class Inpainter:
         flat grey into thin masks). Regions of at least ``large_hole`` of the view: SDXL."""
         from PIL import Image
 
-        base = cv2.inpaint(rgb, hole.astype(np.uint8), 5, cv2.INPAINT_TELEA)
-        count, labels, stats, _ = cv2.connectedComponentsWithStats(hole.astype(np.uint8))
-        large = np.isin(
-            labels,
-            [i for i in range(1, count) if stats[i, 4] >= self.config.large_hole * hole.size],
-        )
+        base, large = split_holes(rgb, hole, self.config.large_hole)
         if not large.any():
             return base
         region = cv2.dilate(large.astype(np.uint8), np.ones((15, 15), np.uint8)).astype(bool)
