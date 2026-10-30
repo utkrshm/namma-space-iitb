@@ -1,4 +1,4 @@
-"""The whole pipeline: video or images → frames → cameras → depth → splat → fill → tour.
+"""The whole pipeline: video or images → frames → cameras → depth → splat → fill → tour → demo.
 
 Every stage writes into its own folder under the run directory and is skipped when its
 output already exists, so an interrupted run resumes where it stopped. ``report.json``
@@ -16,7 +16,7 @@ from .depth import compute_depth
 from .ingest import ingest
 from .sfm import load_solution, solve_cameras
 
-STAGES = ("ingest", "sfm", "depth", "splat", "fill", "tour")
+STAGES = ("ingest", "sfm", "depth", "splat", "fill", "tour", "demo")
 
 
 class RunLog:
@@ -37,7 +37,7 @@ def run(
     output_dir,
     config: PipelineConfig | None = None,
     *,
-    until: str = "tour",
+    until: str = "demo",
     device: str = "cuda:0",
 ) -> dict:
     """Run the stages up to and including ``until``; returns the report."""
@@ -109,5 +109,11 @@ def run(
     from .tour import render_tour
 
     report["tour"] = timed("tour", lambda: render_tour(output, config.tour, device, log))
+    if last < 6:
+        return report
+
+    from .demo import render_demo
+
+    report["demo"] = timed("demo", lambda: render_demo(output, config.demo, device, log))
     save()
     return report

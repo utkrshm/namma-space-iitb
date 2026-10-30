@@ -17,7 +17,8 @@ The run directory then holds:
 | --- | --- |
 | `splat/scene.ply` | The splat in the standard 3DGS PLY format, made only from the capture. It opens in SuperSplat and other viewers. |
 | `fill/scene.ply` | The same splat with the unseen gaps filled. Each Gaussian has a `filled` flag (0 = measured, 1 = generated) and a `support` direction mask. |
-| `tour/tour.mp4` | Overview orbit, a 360° look-around in every area, and a walkthrough. |
+| `tour/tour.mp4` | Overview orbit, a 360° look-around in every area, and a walkthrough. The quality checks for each section are in `tour/tour.json`. |
+| `demo/demo.mp4` | Demo: a sped-up top-down build-up of the splat, camera pose by camera pose, then a highlight reel of the best views from inside. |
 | `report.json` | Every stage's numbers: frames, registration, held-out PSNR / SSIM / LPIPS, filled share. |
 | `log.txt` | What happened, with timings. |
 
@@ -35,7 +36,9 @@ the fill stage.
    captures are trained in automatic blocks, then merged.
 5. `fill`: finds unseen directions at each area's standing point, inpaints them with
    SDXL, distils the result into the splat, and flags it.
-6. `tour`: renders the mp4.
+6. `tour`: renders the mp4 and checks every 10th frame for unrendered, unmeasured and
+   near-camera pixels.
+7. `demo`: renders the top-down build-up and the highlight reel.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the contracts,
 [docs/LEARNINGS.md](docs/LEARNINGS.md) for the problems each stage handles, and

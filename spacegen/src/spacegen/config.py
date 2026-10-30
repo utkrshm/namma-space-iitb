@@ -162,6 +162,23 @@ class TourConfig:
 
 
 @dataclass(frozen=True)
+class DemoConfig:
+    width: int = 1920
+    height: int = 1080
+    fps: int = 30
+    supersample: float = 1.5
+    crf: int = 20
+    build_seconds: float = 24.0
+    clips: int = 8
+    clip_seconds: float = 4.5
+    # Camera heights travelled per second in highlight clips (about 0.6 m/s).
+    walk_speed: float = 0.4
+    crossfade_seconds: float = 0.5
+    reel_fov_deg: float = 70.0
+    turn_seconds: float = 12.0
+
+
+@dataclass(frozen=True)
 class PipelineConfig:
     ingest: IngestConfig = field(default_factory=IngestConfig)
     sfm: SfmConfig = field(default_factory=SfmConfig)
@@ -170,6 +187,7 @@ class PipelineConfig:
     partition: PartitionConfig = field(default_factory=PartitionConfig)
     fill: FillConfig = field(default_factory=FillConfig)
     tour: TourConfig = field(default_factory=TourConfig)
+    demo: DemoConfig = field(default_factory=DemoConfig)
 
     @classmethod
     def from_toml(cls, path: str | Path | None) -> PipelineConfig:

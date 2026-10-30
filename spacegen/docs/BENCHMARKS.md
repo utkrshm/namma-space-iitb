@@ -26,4 +26,7 @@ All held-out numbers are at 6k steps unless noted.
 | + full resolution from step 0 | dataset | 24.5 | 0.42 | Coarse-to-fine costs about 0.5 dB at 6k steps. |
 | + no per-image colour or pose | dataset | 24.7 | 0.42 | Corrections are neutral on this consistent-exposure set. |
 | Depth-seeded start | ours | 11.9 | 0.63 | Seeds in free space grew into blobs in front of cameras. Seeding is now off by default. |
+| After the fix (outlier cameras dropped, robust radius) | ours | 24.0 | 0.39 | Equal to the official cameras: the SfM gap is closed. |
+| 30k steps, default (anti-aliased) | dataset | **30.24** | 0.305 | SSIM 0.909. Published 3DGS: 30.04 / 0.906 / 0.241. |
+| 30k steps, classic rasterization, init scale 0.1 | dataset | 29.97 | 0.304 | Anti-aliasing stays the default. |
 | Root cause of the SfM gap | ours | – | – | Seven "registered" images had no triangulated points, one of them 870 units away. Taken as the maximum camera distance, the scene radius scaled every learning rate about 100×. Fixed: such images are dropped, and the radius is a 95th percentile. |

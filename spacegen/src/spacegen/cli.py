@@ -18,7 +18,7 @@ def main(argv=None) -> int:
     runner.add_argument("source", type=Path, help="Video file or folder of images")
     runner.add_argument("--out", type=Path, required=True, help="Run directory")
     runner.add_argument("--config", type=Path, help="TOML overriding configs/default.toml")
-    runner.add_argument("--until", choices=STAGES, default="tour")
+    runner.add_argument("--until", choices=STAGES, default="demo")
     runner.add_argument(
         "--set",
         action="append",
@@ -53,7 +53,9 @@ def main(argv=None) -> int:
     if args.command == "run":
         report = run(args.source, args.out, config, until=args.until, device=args.device)
         print(
-            json.dumps({k: report.get(k) for k in ("splat", "fill", "tour")}, indent=1, default=str)
+            json.dumps(
+                {k: report.get(k) for k in ("splat", "fill", "tour", "demo")}, indent=1, default=str
+            )
         )
         return 0
     from .bench import run_benchmarks

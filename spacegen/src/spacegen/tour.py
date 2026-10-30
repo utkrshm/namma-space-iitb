@@ -24,7 +24,7 @@ import numpy as np
 import torch
 from scipy.ndimage import gaussian_filter1d
 
-from .config import TourConfig
+from .config import DemoConfig, TourConfig
 from .contracts import Camera, look_at
 from .scene_frame import SceneFrame, estimate_frame
 from .splat.model import GaussianModel, load_ply, render_camera, write_json
@@ -38,7 +38,7 @@ def _intrinsics(width: int, height: int, fov_deg: float) -> np.ndarray:
 
 
 class Writer:
-    def __init__(self, path: Path, config: TourConfig):
+    def __init__(self, path: Path, config: TourConfig | DemoConfig):
         self.container = av.open(str(path), "w")
         self.stream = self.container.add_stream("libx264", rate=config.fps)
         self.stream.width, self.stream.height = config.width, config.height
@@ -59,27 +59,14 @@ class Writer:
 
 
 def label(rgb: np.ndarray, text: str) -> np.ndarray:
+    """White text on a translucent dark box in the top-left corner."""
     scale = rgb.shape[0] / 1080
-    cv2.putText(
-        rgb,
-        text,
-        (int(40 * scale), int(70 * scale)),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        1.3 * scale,
-        (0, 0, 0),
-        int(6 * scale),
-        cv2.LINE_AA,
-    )
-    cv2.putText(
-        rgb,
-        text,
-        (int(40 * scale), int(70 * scale)),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        1.3 * scale,
-        (255, 255, 255),
-        int(2 * scale),
-        cv2.LINE_AA,
-    )
+    font, size, thickness = cv2.FONT_HERSHEY_DUPLEX, 1.0 * scale, max(1, round(2 * scale))
+    (width, height), base = cv2.getTextSize(text, font, size, thickness)
+    x, y, pad = round(36 * scale), round(36 * scale), round(14 * scale)
+    box = rgb[y - pad : y + height + base + pad, x - pad : x + width + pad]
+    box[:] = (box * 0.45).astype(np.uint8)
+    cv2.putText(rgb, text, (x, y + height), font, size, (255, 255, 255), thickness, cv2.LINE_AA)
     return rgb
 
 
