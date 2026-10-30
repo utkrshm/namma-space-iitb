@@ -14,6 +14,35 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 31-10-26 00:25:16 IST — spacegen: estimate the focal length before mapping; check video solves for continuity
+
+- **Status:** Adopted (branch `feat/spacegen`).
+- **Decision:**
+  - Before mapping, estimate each camera's focal from the verified fundamental matrices
+    (Mendonça–Cipolla: E = KᵀFK should have two equal singular values). If COLMAP's guess
+    (1.2 × the long side) is more than 15% off, replace it and verify the pairs again.
+  - For video, measure the solve's continuity along capture order. Isolated cameras (far
+    from all temporal neighbours) and jumps (a step more than 12× the median) count
+    against a mapper attempt, and isolated cameras are left out of training.
+- **Rationale and trade-offs:** The 991-frame portrait phone video `new home.mp4`
+  registered every frame at 1.28 px with GLOMAP. Even so:
+  - its first 28 cameras were scattered hundreds of units away;
+  - the second half of the walk sat four units below the first, in a single-floor
+    apartment;
+  - the splat trained on it was fog (12.7 dB held-out).
+
+  The database held the 2,304 px guess as a *prior* focal, but the lens is 1,050 px.
+  Verification therefore labelled 29% of the sequential pairs "uncalibrated", and every
+  relative pose was decomposed with a focal more than 2× too long. The incremental mapper
+  (2.7 h) did not fix it either. The estimator gives 1,051 px here, 1,046 px on playroom
+  (dataset: 1,040 px) and 780 px on a distorted action cam (bundle adjustment: about
+  1,005 px; the guess was 2,304 px). It costs a second verification pass, minutes on
+  CPU.
+- **Affected components:** `spacegen/src/spacegen/sfm/{mapping,solve}.py`,
+  `SfmConfig.estimate_focal`, `spacegen/docs/LEARNINGS.md`, a CPU test.
+- **Completion criteria:** `new home.mp4` solves with no isolated cameras and no height
+  steps, and its splat gives held-out PSNR comparable to the benchmark scenes.
+
 ## 30-10-26 16:31:31 IST — `spacegen/`: a general video-to-3D-space pipeline
 
 - **Status:** Adopted (branch `feat/spacegen`).

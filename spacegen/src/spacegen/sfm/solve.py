@@ -34,13 +34,57 @@ def _solve(folder, images, frames, features, matches, config, mapper):
     return run_mapper(folder, database, images, mapper)
 
 
-def _quality(models, total: int) -> tuple[float, float]:
-    """Sort key: registered share (to 1%), then lower reprojection error."""
+def continuity(model, frames: list[dict]) -> dict:
+    """Smoothness of a video solve along capture order.
+
+    Consecutive chosen frames are a small, similar motion apart, so a camera far from all
+    of its temporal neighbours has an arbitrary pose (``isolated``), and a single step far
+    larger than the typical one means two stretches of the walk were joined in the wrong
+    place (``jumps``). Reprojection error does not show either: on a 991-frame apartment
+    the solve had 1.28 px, yet its first 25 cameras were scattered hundreds of units
+    away and the camera height dropped by 0.6 camera heights twice.
+    """
+    order = {f["name"]: f["position"] for f in frames}
+    images = sorted(
+        (im for im in model.images.values() if im.has_pose and im.name in order),
+        key=lambda im: order[im.name],
+    )
+    if len(images) < 8:
+        return {"median_step": None, "jumps": [], "isolated": []}
+    centres = np.stack([im.projection_center() for im in images])
+    positions = np.array([order[im.name] for im in images])
+    gaps = np.maximum(np.diff(positions), 1)
+    steps = np.linalg.norm(np.diff(centres, axis=0), axis=1) / gaps
+    median = float(np.median(steps)) + 1e-12
+    isolated = set()
+    for k in range(len(images)):
+        neighbours = [j for j in range(max(0, k - 3), min(len(images), k + 4)) if j != k]
+        distance = np.median(np.linalg.norm(centres[neighbours] - centres[k], axis=1))
+        if distance > 20 * median:
+            isolated.add(k)
+    jumps = [
+        images[k + 1].name
+        for k in range(len(steps))
+        if steps[k] > 12 * median and k not in isolated and k + 1 not in isolated
+    ]
+    return {
+        "median_step": median,
+        "jumps": jumps,
+        "isolated": [images[k].name for k in sorted(isolated)],
+    }
+
+
+def _quality(models, frames: list[dict], video: bool) -> tuple[float, float]:
+    """Sort key: registered share minus continuity penalties (video), then lower error."""
     if not models:
         return (0.0, 0.0)
     errors = [p.error for p in models[0].points3D.values()]
     error = float(np.mean(errors)) if errors else 0.0
-    return (round(models[0].num_reg_images() / total, 2), -error)
+    share = models[0].num_reg_images() / len(frames)
+    if video:
+        check = continuity(models[0], frames)
+        share -= 0.02 * len(check["jumps"]) + len(check["isolated"]) / len(frames)
+    return (round(share, 2), -error)
 
 
 def _map_with_fallbacks(output: Path, images, frames, features, matches, config: SfmConfig):
@@ -55,20 +99,24 @@ def _map_with_fallbacks(output: Path, images, frames, features, matches, config:
     attempts = [(config.camera_model, config.mapper), (config.camera_model, other)]
     if config.fisheye_fallback and config.camera_model != "OPENCV_FISHEYE":
         attempts.append(("OPENCV_FISHEYE", config.mapper))
-    total = len(frames)
+    video = all(f.get("timestamp_s") is not None for f in frames)
     best, best_key, tried = None, None, {}
     for number, (lens, mapper) in enumerate(attempts):
         folder = output if number == 0 else output / f"retry_{lens.lower()}_{mapper}"
         attempt_config = replace(config, camera_model=lens)
         models = _solve(folder, images, frames, features, matches, attempt_config, mapper)
-        key = _quality(models, total)
+        key = _quality(models, frames, video)
+        check = continuity(models[0], frames) if models and video else {}
         tried[f"{lens}/{mapper}"] = {
             "models": [m.num_reg_images() for m in models],
             "mean_reprojection_px": -key[1],
+            "jumps": len(check.get("jumps", [])),
+            "isolated": len(check.get("isolated", [])),
         }
         if best_key is None or key > best_key:
             best, best_key, best_folder = models, key, folder
         good = key[0] >= config.min_registered_fraction and -key[1] <= config.max_reprojection_px
+        good &= not check.get("jumps")
         if good:
             break
     if best and best_folder != output:
@@ -203,9 +251,12 @@ def load_solution(sfm_dir, frames_dir, min_points: int = 30) -> Solution:
     sfm_dir, frames_dir = Path(sfm_dir).resolve(), Path(frames_dir).resolve()
     records = {f["name"]: f for f in json.loads((frames_dir / "frames.json").read_text())["frames"]}
     model = pycolmap.Reconstruction(sfm_dir / "undistorted" / "sparse")
+    frames = list(records.values())
+    video = all(f.get("timestamp_s") is not None for f in frames)
+    isolated = set(continuity(model, frames)["isolated"]) if video else set()
     entries = []
     for image in model.images.values():
-        if not image.has_pose or image.num_points3D < min_points:
+        if not image.has_pose or image.num_points3D < min_points or image.name in isolated:
             continue
         camera = model.cameras[image.camera_id]
         fx, fy, cx, cy = camera.params

@@ -43,6 +43,10 @@ class SfmConfig:
     retrieval_max_planar_fraction: float = 0.7
     ransac_px: float = 2.0
     min_inliers: int = 25
+    # Replace COLMAP's focal guess (1.2 × long side) with one estimated from the verified
+    # fundamental matrices, then verify again. Phone video is often far wider than the
+    # guess (0.55 × long side), and the mappers decompose relative poses with it.
+    estimate_focal: bool = True
     # Video: solve with sequential pairs first and keep only loops whose relative rotation
     # agrees with it.
     loop_check: bool = True

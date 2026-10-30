@@ -27,6 +27,67 @@ def camera_params(width: int, height: int, model: str) -> str:
     raise ValueError(f"Unsupported camera model {model}")
 
 
+def estimate_focal(fundamentals: list[np.ndarray], width: int, height: int) -> float | None:
+    """Focal length in pixels from fundamental matrices (Mendonça and Cipolla, 1999).
+
+    With the true intrinsics K, the essential matrix E = Kᵀ F K has two equal non-zero
+    singular values. The estimate is the focal (principal point at the image centre, square
+    pixels) that makes them most nearly equal over all pairs (median cost). It is within 1%
+    of the dataset calibration on Deep Blending playroom.
+    """
+    if len(fundamentals) < 20:
+        return None
+    stack = np.stack(fundamentals)
+    stack = stack / np.linalg.norm(stack, axis=(1, 2), keepdims=True)
+
+    def cost(focal: float) -> float:
+        k = np.array([[focal, 0, width / 2], [0, focal, height / 2], [0, 0, 1]])
+        values = np.linalg.svd(k.T @ stack @ k, compute_uv=False)
+        return float(np.median((values[:, 0] - values[:, 1]) / (values[:, 0] + values[:, 1])))
+
+    long_side = max(width, height)
+    coarse = long_side * np.geomspace(0.25, 4, 161)
+    best = coarse[np.argmin([cost(f) for f in coarse])]
+    fine = np.geomspace(best / 1.02, best * 1.02, 41)
+    return float(fine[np.argmin([cost(f) for f in fine])])
+
+
+def _calibrate_focal(database_path: Path, min_inliers: int = 100) -> dict:
+    """Estimate each camera's focal from its verified pairs; rewrite the cameras whose
+    guess is more than 15% off. Returns {camera_id: {guess, estimate, replaced}}."""
+    import pycolmap
+
+    usable = {
+        pycolmap.TwoViewGeometryConfiguration.CALIBRATED,
+        pycolmap.TwoViewGeometryConfiguration.UNCALIBRATED,
+    }
+    with pycolmap.Database.open(database_path) as database:
+        cameras = {camera.camera_id: camera for camera in database.read_all_cameras()}
+        camera_of = {image.image_id: image.camera_id for image in database.read_all_images()}
+        pair_ids, geometries = database.read_two_view_geometries()
+        fundamentals = {camera_id: [] for camera_id in cameras}
+        for pair_id, geometry in zip(pair_ids, geometries, strict=True):
+            first, second = pycolmap.pair_id_to_image_pair(pair_id)
+            same = camera_of[first] == camera_of[second]
+            if same and geometry.config in usable and len(geometry.inlier_matches) >= min_inliers:
+                fundamentals[camera_of[first]].append(geometry.F)
+
+        result = {}
+        for camera_id, camera in cameras.items():
+            guess = float(camera.params[0])
+            estimate = estimate_focal(fundamentals[camera_id], camera.width, camera.height)
+            replaced = estimate is not None and not 0.87 < estimate / guess < 1.15
+            if replaced:
+                params = np.array(camera.params, dtype=np.float64)
+                params[
+                    : 2 if camera.model.name in ("OPENCV", "OPENCV_FISHEYE", "PINHOLE") else 1
+                ] = estimate
+                camera.params = params
+                database.update_camera(camera)
+            result[str(camera_id)] = {"guess": guess, "estimate": estimate, "replaced": replaced}
+    return result
+
+
 def build_database(
     folder: Path,
     images: Path,
@@ -48,9 +109,10 @@ def build_database(
         "pairs": sorted(f"{i}-{j}:{len(m)}" for (i, j), m in matches.items()),
         "min_inliers": config.min_inliers,
         "ransac_px": config.ransac_px,
+        "estimate_focal": config.estimate_focal,
     }
     if database_path.exists() and stamp_path.exists():
-        if json.loads(stamp_path.read_text()) == stamp:
+        if json.loads(stamp_path.read_text()).get("inputs") == stamp:
             return database_path
     stamp_path.unlink(missing_ok=True)
     database_path.unlink(missing_ok=True)
@@ -79,7 +141,15 @@ def build_database(
     verification.min_num_inliers = config.min_inliers
     verification.ransac.max_error = 2 * config.ransac_px
     pycolmap.verify_matches(database_path, pairs_path, verification)
-    stamp_path.write_text(json.dumps(stamp))
+
+    focal = {}
+    if config.estimate_focal:
+        focal = _calibrate_focal(database_path)
+        if any(entry["replaced"] for entry in focal.values()):
+            with pycolmap.Database.open(database_path) as database:
+                database.clear_two_view_geometries()
+            pycolmap.verify_matches(database_path, pairs_path, verification)
+    stamp_path.write_text(json.dumps({"inputs": stamp, "focal": focal}))
     return database_path
 
 

@@ -136,6 +136,31 @@ def test_balanced_split_gives_equal_blocks_even_with_an_outlying_group():
     assert max(ranges[:2]) < 8
 
 
+def test_estimate_focal_recovers_a_wide_phone_lens_from_fundamental_matrices():
+    import cv2
+
+    from spacegen.sfm.mapping import estimate_focal
+
+    rng = np.random.default_rng(0)
+    width, height, focal = 1080, 1920, 1050.0
+    k = np.array([[focal, 0, width / 2], [0, focal, height / 2], [0, 0, 1]])
+    points = rng.uniform([-3, -3, 2], [3, 3, 8], (400, 3))
+    fundamentals = []
+    for _ in range(30):
+        rotation, _ = cv2.Rodrigues(rng.normal(0, 0.15, 3))
+        translation = rng.normal(0, 0.4, 3)
+        first = points @ k.T
+        second = (points @ rotation.T + translation) @ k.T
+        a, b = first[:, :2] / first[:, 2:], second[:, :2] / second[:, 2:]
+        a, b = a + rng.normal(0, 0.5, a.shape), b + rng.normal(0, 0.5, b.shape)
+        f_matrix, _ = cv2.findFundamentalMat(a, b, cv2.FM_8POINT)
+        fundamentals.append(f_matrix)
+
+    estimate = estimate_focal(fundamentals, width, height)
+    assert abs(estimate / focal - 1) < 0.03
+    assert estimate_focal(fundamentals[:5], width, height) is None
+
+
 def test_fibonacci_directions_cover_the_sphere():
     directions = fibonacci_directions()
     assert np.allclose(np.linalg.norm(directions, axis=1), 1)

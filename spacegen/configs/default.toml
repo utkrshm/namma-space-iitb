@@ -22,6 +22,7 @@ retrieval_min_inliers = 60
 retrieval_max_planar_fraction = 0.7
 ransac_px = 2.0
 min_inliers = 25
+estimate_focal = true
 loop_check = true
 loop_max_rotation_deg = 10.0
 camera_model = "OPENCV"
