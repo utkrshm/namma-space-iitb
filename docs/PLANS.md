@@ -14,6 +14,68 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 30-10-26 16:31:31 IST — `spacegen/`: a general video-to-3D-space pipeline
+
+- **Status:** Adopted (branch `feat/spacegen`).
+- **Decision:** Build a standalone project in `spacegen/`, with its own `pyproject.toml`,
+  `src/spacegen/`, tests, configs and docs. One command, `spacegen run <video or image
+  folder> --out <dir>`, runs every stage and resumes. It ends in a splat, a report and a
+  tour mp4. Proven parts of `src/` are copied and cleaned up, not imported, so the folder
+  can become its own project.
+
+  These Coorg lessons are built in:
+  - ALIKED + LightGlue matching, with a planar gate on retrieval pairs;
+  - loops checked by rotation against a sequential solve;
+  - the OPENCV lens model;
+  - MCMC noise normalized by scene radius, plus screen-size pruning;
+  - per-image colour and pose correction;
+  - a depth prior;
+  - visibility-weighted block merge with a joint fine-tune;
+  - supersampled renders;
+  - a look-around that turns only through supported directions.
+
+  New in spacegen:
+  - automatic blocks by camera position, sized to GPU memory, instead of typed-in times;
+  - automatic room finding and floor alignment;
+  - per-Gaussian *view-direction support*, which records from which directions the
+    capture saw each Gaussian;
+  - a **fill-and-mark** stage. Holes and unsupported pixels in probe views at room
+    centres are inpainted by a diffusion model and distilled into the splat. Filled
+    Gaussians are flagged in the PLY, and the report gives the share of filled pixels.
+- **Rationale and trade-offs:**
+  - **Typed-in times:** Coorg needed time ranges, room names and a hand-run chain of
+    about ten steps. A general pipeline must decide these from the data.
+  - **Why fill and mark:** smears and black gaps come from directions the camera never
+    saw (see the 30-10-26 10:30 entry). Training cannot recover them. The user chose to
+    fill them with generated content and mark it, rather than show only filmed views.
+    Filled content is plausible, not measured. It must never be reported as measured.
+  - **Scoring:** benchmarks give honest numbers. Mip-NeRF 360 indoor scenes and Deep
+    Blending use the standard every-8th-image held-out split and are compared with the
+    published 3DGS scores. YouTube walkthroughs test real phone video and are kept local.
+  - **Cost:** a standalone environment costs some disk for its own venv; uv hard-links
+    from its cache.
+- **Affected components:** new `spacegen/` only. Nothing in `src/` changes. This entry,
+  `docs/STATE.md` and `docs/ARCHITECTURE.md` point to `spacegen/docs/`.
+- **Implementation steps:**
+  1. Scaffold, contracts and ingest: video or images to frames, with sharpness and
+     motion-adaptive selection.
+  2. SfM.
+  3. Monocular depth.
+  4. Single-block trainer with LPIPS/PSNR/SSIM evaluation, benchmarked on Deep Blending
+     and Mip-NeRF 360 indoor.
+  5. Partition and merge, tested on Coorg.
+  6. Floor, rooms and tour.
+  7. Support and fill-and-mark.
+  8. YouTube walkthroughs.
+  9. Fix what the checks find and repeat.
+- **Completion criteria:**
+  - Held-out PSNR within about 0.5 dB of published 3DGS, or better, on the benchmark
+    scenes.
+  - Coorg at least as good as `opencv/finetune_2` without hand settings.
+  - Every tour frame has no unrendered (alpha < 0.5) pixels.
+  - Filled share is reported.
+  - The mp4s are inspected visually.
+
 ## 30-10-26 10:30:00 IST — Free-viewpoint quality: solid surfaces and an in-room look-around
 
 - **Status:** Partly adopted (30-10-26 11:10 IST). The look-around, supersampled tour

@@ -1,0 +1,67 @@
+[project]
+name = "spacegen"
+version = "0.1.0"
+description = "Any indoor video (or image folder) to a photoreal Gaussian-splat 3D space, with a tour video"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "av>=18.1.0",
+    "numpy>=2.4.6",
+    "opencv-python-headless>=5.0.0.93",
+    "scipy>=1.14,<2",
+    "plyfile>=1.1,<2",
+    "pillow>=10",
+    "torch>=2.14.1",
+    "torchvision>=0.29.1",
+    "gsplat==1.5.3",
+    "pycolmap>=4.2",
+    "lightglue",
+    "transformers>=5.20.2",
+    "lpips>=0.1.4",
+    "matplotlib>=3.9",
+]
+
+[project.optional-dependencies]
+# Diffusion inpainting for the fill-and-mark stage.
+fill = [
+    "diffusers>=0.35",
+    "accelerate>=1.0",
+]
+
+[project.scripts]
+spacegen = "spacegen.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/spacegen"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["cuda: needs a CUDA GPU (real gsplat rendering/training)"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "RUF"]
+# Docstrings use ×, ², – and similar on purpose.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.uv.sources]
+lightglue = { git = "https://github.com/cvg/LightGlue" }
+torch = [{ index = "pytorch-cu126", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cu126", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]

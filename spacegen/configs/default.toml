@@ -1,0 +1,107 @@
+# spacegen defaults (generated from src/spacegen/config.py; edit a copy and pass --config).
+
+[ingest]
+analysis_long_side = 480
+max_long_side = 1920
+jpeg_quality = 95
+motion_step = 0.035
+max_gap_s = 0.75
+max_frames = 1200
+min_relative_sharpness = 0.6
+
+[sfm]
+feature_long_side = 1600
+max_keypoints = 4096
+detection_threshold = 0.005
+sequential_window = 8
+descriptor_model = "facebook/dinov2-base"
+retrieval_top_k = 10
+retrieval_min_similarity = 0.4
+retrieval_min_gap = 12
+retrieval_min_inliers = 60
+retrieval_max_planar_fraction = 0.7
+ransac_px = 2.0
+min_inliers = 25
+loop_check = true
+loop_max_rotation_deg = 10.0
+camera_model = "OPENCV"
+mapper = "global"
+min_registered_fraction = 0.9
+
+[depth]
+enabled = true
+model = "depth-anything/Depth-Anything-V2-Small-hf"
+downscale = 4
+
+[splat]
+max_long_side = 1920
+holdout_every = 8
+steps = 30000
+seed = 42
+sh_degree = 3
+sh_interval = 1000
+ssim_weight = 0.2
+resolution_schedule = [[0, 4], [1500, 2], [4000, 1]]
+means_lr = 0.00016
+means_lr_final = 1.6e-06
+scales_lr = 0.005
+quats_lr = 0.001
+opacities_lr = 0.05
+sh0_lr = 0.0025
+shn_lr = 0.000125
+opacity_regularization = 0.01
+scale_regularization = 0.01
+pose_refinement = true
+pose_lr = 1e-05
+pose_start_step = 1000
+appearance = true
+appearance_lr = 0.001
+appearance_regularization = 0.001
+depth_prior_weight = 0.1
+depth_seed_points = 150000
+depth_prior_until = 15000
+random_background = false
+rasterize_mode = "antialiased"
+max_gaussians = 1500000
+initial_opacity = 0.5
+initial_scale = 0.5
+noise_lr = 500000.0
+refine_start = 500
+refine_stop = 25000
+refine_every = 100
+min_opacity = 0.005
+max_scale_fraction = 0.1
+max_screen_fraction = 0.15
+log_every = 200
+evaluate_every = 10000
+checkpoint_every = 5000
+
+[partition]
+max_images_per_block = 450
+overlap = 0.15
+finetune_steps = 10000
+
+[fill]
+enabled = true
+model = "diffusers/stable-diffusion-xl-1.0-inpainting-0.1"
+prompt = "a photo of the inside of a room, realistic, detailed, natural light"
+negative_prompt = "blurry, distorted, text, watermark, people, cartoon"
+yaw_steps = 12
+pitches_deg = [-30.0, 0.0, 30.0]
+field_of_view_deg = 75.0
+probe_long_side = 768
+min_support = 0.5
+min_alpha = 0.9
+large_hole = 0.01
+support_angle_deg = 35.0
+finetune_steps = 6000
+pseudo_view_weight = 0.5
+
+[tour]
+width = 1920
+height = 1080
+fps = 30
+supersample = 1.5
+crf = 20
+look_seconds = 14.0
+walk_seconds_per_metre = 1.2
