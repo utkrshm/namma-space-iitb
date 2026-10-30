@@ -1,0 +1,26 @@
+# Free-viewpoint fine-tune of opencv/finetune_2 (see docs/PLANS.md, 30-10-26 10:30):
+# random background (opaque surfaces), flat Gaussians and a stronger depth prior.
+# image: sfm_opencv_dense8, --initial-ply opencv/finetune_2/scene.ply
+
+[data]
+downscale = 1
+holdout_exclusion_s = 0.0
+
+[training]
+steps = 8000
+sh_degree = 3
+sh_interval = 1
+resolution_schedule = [[0, 1]]
+means_lr = 4e-5
+means_lr_final = 1.6e-6
+pose_start_step = 0
+depth_prior_weight = 0.2
+random_background = true
+flatten_regularization = 0.01
+evaluate_every = 100000
+checkpoint_every = 2500
+
+[refinement]
+max_gaussians = 5000000
+start_step = 100000
+stop_step = 100000

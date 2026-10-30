@@ -1,0 +1,28 @@
+# Free-viewpoint fine-tune that rebuilds capacity: start from opencv/finetune_2 pruned to
+# the 451k Gaussians that cover at least 1 px in some training view
+# (prune_invisible.py), then let MCMC grow back to 3M under the free-viewpoint terms.
+# Relocating the 3.5M dead Gaussians in one step made gsplat's relocation NaN.
+# image: sfm_opencv_dense8, --initial-ply solid/finetune_2_visible.ply
+
+[data]
+downscale = 1
+holdout_exclusion_s = 0.0
+
+[training]
+steps = 16000
+sh_degree = 3
+sh_interval = 1
+resolution_schedule = [[0, 1]]
+means_lr = 1.6e-4
+means_lr_final = 1.6e-6
+pose_start_step = 0
+depth_prior_weight = 0.2
+random_background = true
+flatten_regularization = 0.01
+evaluate_every = 100000
+checkpoint_every = 2500
+
+[refinement]
+max_gaussians = 3000000
+start_step = 200
+stop_step = 12000

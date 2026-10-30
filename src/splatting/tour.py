@@ -7,7 +7,9 @@ looks at the model from outside, the way a 3D viewer would:
    the model fills in as the camera path is drawn.
 2. **Dollhouse orbit:** a 360° orbit from above with the ceiling cut away.
 3. **Rooms:** a slow arc above each room, given as capture-time ranges.
-4. **Walkthrough:** eye-level render along the smoothed capture path (the full, unfiltered
+4. **Look-around:** standing in each room at eye level and turning on the spot, through
+   the directions the phone filmed from there (the full model, landscape).
+5. **Walkthrough:** eye-level render along the smoothed capture path (the full, unfiltered
    model), beside the plan with the current position.
 
 Scene frame: SfM world units. "Up" is the normal of a plane fitted to the camera centres,
@@ -165,6 +167,133 @@ def cutaway_mask(
     return keep
 
 
+def headings(frame: SceneFrame, camera_to_world: np.ndarray) -> np.ndarray:
+    """Horizontal viewing direction of each camera, radians from ``frame.across``."""
+    forward = camera_to_world[:, :3, 2]
+    return np.arctan2(forward @ frame.side, forward @ frame.across)
+
+
+def longest_arc(covered: np.ndarray) -> tuple[int, int]:
+    """(first bin, length) of the longest circular run of True bins; all bins if all True."""
+    bins = len(covered)
+    if covered.all():
+        return 0, bins
+    start, length, run = 0, 0, 0
+    for position in range(2 * bins):
+        run = run + 1 if covered[position % bins] else 0
+        if run > length:
+            start, length = (position - run + 1) % bins, run
+    return start, length
+
+
+def look_around(
+    frame: SceneFrame,
+    camera_to_world: np.ndarray,
+    frames: int,
+    radius: float = 0.5,
+    bins: int = 36,
+    min_cameras: int = 3,
+    pitch_deg: float | None = None,
+    pitch_range_deg: tuple[float, float] = (-35.0, 0.0),
+    avoid: np.ndarray | None = None,
+    min_separation: float = 1.5,
+    edge_trim_deg: float = 20.0,
+    stand: int | None = None,
+) -> tuple[list[np.ndarray], dict]:
+    """World-to-camera poses for standing in a room and turning on the spot.
+
+    ``camera_to_world`` holds the room's capture cameras; ``radius`` is in camera heights.
+    The standing point is the capture camera whose neighbourhood was filmed over the
+    longest unbroken arc of heading bins (each bin needing ``min_cameras`` cameras within
+    ``radius``). The turn covers that arc, or the full circle if every bin is filmed.
+    For each heading the eye moves to the mean position of the nearby cameras that looked
+    that way, so the view stays close to where the phone actually was (a small sway, as
+    when a person turns), and is smoothed along the turn. The camera tilt is the same
+    weighted mean of the phone's tilt, limited to ``pitch_range_deg``, unless
+    ``pitch_deg`` fixes it: a phone held at chest height mostly looks down, and the upper
+    walls it rarely saw render poorly. ``avoid`` holds earlier standing points (world
+    positions): candidates closer than ``min_separation`` camera heights are skipped, which
+    gives a large room a second, different look-around. A partial arc stops
+    ``edge_trim_deg`` short of each filmed end: the look-around view is wider than the
+    phone's portrait view, so at the very end its edge shows unfilmed directions.
+    ``stand`` forces the standing camera; ``info["ranking"]`` lists the candidates, best
+    first, so a caller can compare several.
+    """
+    camera_height = -frame.floor
+    centres = camera_to_world[:, :3, 3]
+    plan = frame.plan(centres)
+    angle = headings(frame, camera_to_world)
+    bin_of = np.floor((angle + np.pi) / (2 * np.pi) * bins).astype(int) % bins
+
+    # Standing point: the longest filmed arc, then the most cameras.
+    allowed = np.ones(len(centres), bool)
+    if avoid is not None and len(avoid):
+        separation = np.linalg.norm(plan[:, None] - frame.plan(np.asarray(avoid))[None], axis=2)
+        allowed = separation.min(1) >= min_separation * camera_height
+    scores = {}
+    for index in [stand] if stand is not None else np.flatnonzero(allowed):
+        close = np.linalg.norm(plan - plan[index], axis=1) < radius * camera_height
+        covered = np.bincount(bin_of[close], minlength=bins) >= min_cameras
+        scores[int(index)] = (longest_arc(covered)[1], int(close.sum()))
+    ranking = sorted(scores, key=scores.get, reverse=True)
+    near = None
+    if ranking:
+        stand = ranking[0]
+        near = np.linalg.norm(plan - plan[stand], axis=1) < radius * camera_height
+    if near is None:  # every capture position is too close to an earlier standing point
+        return [], {"sweep_deg": 0.0, "filmed_arc_deg": 0.0, "filmed_bins": 0}
+    counts = np.bincount(bin_of[near], minlength=bins)
+    start_bin, length = longest_arc(counts >= min_cameras)
+    if length == bins:  # full circle: start where the phone looked most
+        start_bin = int(counts.argmax())
+    first = -np.pi + 2 * np.pi * start_bin / bins
+    span = 2 * np.pi * length / bins
+    if length < bins:  # trimmed, with easing in and out at the ends
+        trim = min(np.radians(edge_trim_deg), 0.25 * span)
+        first, span = first + trim, span - 2 * trim
+        progress = 0.5 - 0.5 * np.cos(np.pi * np.linspace(0, 1, frames))
+    else:
+        progress = np.linspace(0, 1, frames, endpoint=False)
+    sweep = first + span * progress
+
+    # Eye and tilt per heading: angular-weighted means over the nearby cameras, smoothed.
+    near_angle, near_centres = angle[near], centres[near]
+    near_pitch = np.arcsin(np.clip(camera_to_world[near, :3, 2] @ frame.up, -1, 1))
+    values = []
+    for heading in sweep:
+        difference = np.angle(np.exp(1j * (near_angle - heading)))
+        weight = np.exp(-0.5 * (difference / np.radians(20)) ** 2) + 1e-6
+        both = np.column_stack((near_centres, near_pitch))
+        values.append((weight[:, None] * both).sum(0) / weight.sum())
+    values = np.array(values)
+    window = max(1, frames // 12)
+    padded = np.concatenate((values[:1].repeat(window, 0), values, values[-1:].repeat(window, 0)))
+    kernel = np.ones(2 * window + 1) / (2 * window + 1)
+    values = np.stack([np.convolve(padded[:, axis], kernel, "valid") for axis in range(4)], 1)
+    eyes = values[:, :3]
+    if pitch_deg is None:
+        pitches = np.clip(values[:, 3], *np.radians(pitch_range_deg))
+    else:
+        pitches = np.full(frames, np.radians(pitch_deg))
+
+    poses = []
+    for eye, heading, pitch in zip(eyes, sweep, pitches):
+        level = np.cos(heading) * frame.across + np.sin(heading) * frame.side
+        direction = np.cos(pitch) * level + np.sin(pitch) * frame.up
+        poses.append(look_at(eye, eye + direction, frame.up))
+    info = {
+        "ranking": ranking,
+        "stand_index": int(stand),
+        "stand": centres[stand].tolist(),
+        "filmed_bins": int((counts >= min_cameras).sum()),
+        "filmed_arc_deg": float(360 * length / bins),
+        "sweep_deg": float(np.degrees(span)),
+        "nearby_cameras": int(near.sum()),
+        "mean_pitch_deg": float(np.degrees(pitches.mean())),
+    }
+    return poses, info
+
+
 @torch.no_grad()
 def first_seen(means: torch.Tensor, world_to_camera, intrinsics, sizes, times, max_depth):
     """Capture time at which each Gaussian centre first falls inside a camera's view."""
@@ -244,6 +373,10 @@ def render_tour(
     build_s: float = 14.0,
     orbit_s: float = 18.0,
     room_s: float = 7.0,
+    turn_s: float = 16.0,
+    supersample: float = 1.5,
+    look_min_cameras: int = 5,
+    look_candidates: int = 6,
     keyframe_stride: int = 4,
     frames_per_key: int = 6,
     rooms=ROOMS,
@@ -278,15 +411,24 @@ def render_tour(
     cutaway = GaussianModel({k: v[keep_t] for k, v in params.items()}, model.sh_degree)
     camera_height = -frame.floor
     seen = first_seen(
-        cutaway.params["means"], world_to_camera, intrinsics, sizes, times, 1.6 * camera_height
+        cutaway.params["means"], world_to_camera, intrinsics, sizes, times, 3 * camera_height
     )
     seen = torch.where(torch.isinf(seen), torch.tensor(times.max(), device=device), seen)
     logits = cutaway.params["opacities"].data.clone()
 
-    def draw(model_, world_to_camera_, k, w, h, mode="antialiased"):
+    def draw(model_, world_to_camera_, k, w, h, mode="antialiased", near_plane=0.01):
+        # Supersampled: render larger and area-average, which removes the shimmer of fine
+        # patterns (floor inlay, window grilles) between video frames.
         w2c = torch.as_tensor(world_to_camera_, dtype=torch.float32, device=device)
-        rgb, _, _, _ = render(model_, w2c, k, w, h, degree, mode)
-        return _to_image(rgb)
+        big = k.clone()
+        big[:2] *= supersample
+        big[:2, 2] = (k[:2, 2] + 0.5) * supersample - 0.5  # same image area, integer centres
+        size = (round(w * supersample), round(h * supersample))
+        rgb, _, _, _ = render(model_, w2c, big, size[0], size[1], degree, mode, near_plane)
+        image = _to_image(rgb)
+        return (
+            cv2.resize(image, (w, h), interpolation=cv2.INTER_AREA) if supersample != 1 else image
+        )
 
     # Plan camera: high above the middle of the kept Gaussians, across-axis horizontal.
     plan = frame.plan(means[keep])
@@ -371,7 +513,79 @@ def render_tour(
             video.write(_caption(image, lines))
         sections[f"room:{name}"] = count
 
-    # 4. Walkthrough at eye level (full model) beside the plan.
+    # 4. Look-around: standing in each room at eye level (full model, 75° wide view). A
+    #    second standing point is added where the room offers another long filmed arc.
+    #    Gaussians closer than 0.2 camera heights are skipped: blobs right at the lens.
+    turn_focal = 0.5 * width / np.tan(np.radians(37.5))
+    turn_k = _intrinsics(turn_focal, width, height, device)
+    near = 0.2 * camera_height
+    small_k = _intrinsics(turn_focal / 4, width // 4, height // 4, device)
+
+    def sharpest(room_cameras, options, ranking, longest):
+        """Of the top candidates (≥ 75% of the longest arc, 0.3 camera heights apart),
+        the one whose turn renders best in 9 small frames. Score: the 20th-percentile
+        Laplacian variance (one blurred view counts against a point), times 1 − 2 × the
+        largest share of pixels nearer than 0.6 camera heights. Close surfaces were only
+        seen at a glancing angle and render as smears even when the rest is sharp."""
+        chosen, scores = [], {}
+        for index in ranking:
+            if len(chosen) == look_candidates:
+                break
+            plan_here = frame.plan(room_cameras[index, :3, 3])
+            if any(
+                np.linalg.norm(plan_here - frame.plan(room_cameras[other, :3, 3]))
+                < 0.3 * camera_height
+                for other in chosen
+            ):
+                continue
+            poses, info = look_around(frame, room_cameras, 9, stand=index, **options)
+            if info["filmed_arc_deg"] < 0.75 * longest:
+                continue
+            chosen.append(index)
+            sharpness, close = [], []
+            for pose in poses:
+                w2c = torch.as_tensor(pose, dtype=torch.float32, device=device)
+                rgb, depth, _, _ = render(
+                    model, w2c, small_k, width // 4, height // 4, degree, "classic", near
+                )
+                grey = cv2.cvtColor(_to_image(rgb), cv2.COLOR_RGB2GRAY)
+                sharpness.append(cv2.Laplacian(grey, cv2.CV_32F).var())
+                close.append(float((depth < 0.6 * camera_height).float().mean()))
+            score = np.percentile(sharpness, 20) * max(0.0, 1 - 2 * max(close))
+            scores[index] = float(score)
+        return max(scores, key=scores.get), scores
+
+    for name, t0, t1 in rooms:
+        inside = (times >= t0) & (times < t1)
+        if inside.sum() < 10:
+            continue
+        room_cameras = camera_to_world[inside]
+        stands = []
+        for number in range(2):
+            avoid = np.array(stands).reshape(-1, 3)
+            options = {"min_cameras": look_min_cameras, "avoid": avoid}
+            _, info = look_around(frame, room_cameras, 2, **options)
+            if not info.get("ranking") or (number and info["filmed_arc_deg"] < 90):
+                break
+            stand, scores = sharpest(room_cameras, options, info["ranking"], info["filmed_arc_deg"])
+            _, info = look_around(frame, room_cameras, 2, stand=stand, **options)
+            stands.append(info["stand"])
+            count = max(2, round(turn_s * fps * max(info["sweep_deg"], 180) / 360))
+            poses, info = look_around(frame, room_cameras, count, stand=stand, **options)
+            info["candidate_sharpness"] = {str(key): value for key, value in scores.items()}
+            info.pop("ranking")
+            if info["sweep_deg"] < 360:  # turn back, as a person looking around would
+                poses = poses + poses[::-1]
+            lines = [
+                f"4. Standing in the {name.lower()}",
+                f"looking around ({info['sweep_deg']:.0f} deg)",
+            ]
+            for pose in poses:
+                image = draw(model, pose, turn_k, width, height, "classic", near)
+                video.write(_caption(image, lines))
+            sections[f"look_around:{name}:{number + 1}"] = {**info, "frames": len(poses)}
+
+    # 5. Walkthrough at eye level (full model) beside the plan.
     side_h = height
     side_w = round(sizes[0][0] * side_h / sizes[0][1]) // 2 * 2
     map_w = width - side_w
@@ -398,7 +612,7 @@ def render_tour(
         )
         cv2.circle(panel, tuple(here[0]), 10, (255, 60, 60), -1, cv2.LINE_AA)
         room = next((name for name, t0, t1 in rooms if t0 <= now < t1), "")
-        _caption(panel, ["4. Walkthrough (eye level)", f"{room}   {now:5.1f} s"])
+        _caption(panel, ["5. Walkthrough (eye level)", f"{room}   {now:5.1f} s"])
         video.write(np.concatenate((eye_image, panel), axis=1))
     sections["walkthrough"] = len(path)
 

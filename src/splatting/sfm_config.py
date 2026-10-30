@@ -52,6 +52,11 @@ class SfmTrainingConfig:
     appearance_regularization: float = 1e-3
     # Monocular depth prior (Pearson correlation with <sfm_dir>/mono_depth); 0 disables.
     depth_prior_weight: float = 0.0
+    # Composite each training render over a random colour, so see-through regions cost
+    # loss and surfaces become opaque (instead of fog that only matches over black).
+    random_background: bool = False
+    # Mean smallest/largest scale ratio: pushes Gaussians to thin discs on surfaces.
+    flatten_regularization: float = 0.0
     log_every: int = 200
     evaluate_every: int = 10_000
     checkpoint_every: int = 5000

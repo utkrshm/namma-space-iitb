@@ -176,3 +176,40 @@ def test_depth_prior_loss_is_scale_and_shift_invariant():
     assert float(pearson_loss(depth, prior, valid)) == pytest.approx(0.0, abs=1e-5)
     assert float(pearson_loss(depth, -prior, valid)) == pytest.approx(2.0, abs=1e-5)
     assert float(pearson_loss(depth, prior, torch.zeros_like(valid))) == 0.0
+
+
+@pytest.mark.cuda
+def test_random_background_and_flatness_give_an_opaque_thin_wall(wall_sfm, tmp_path):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is unavailable")
+    pytest.importorskip("gsplat")
+    from src.splatting import load_model, train_sfm_splat
+
+    def run(name, **terms):
+        training = SfmTrainingConfig(
+            steps=1200,
+            sh_degree=0,
+            resolution_schedule=((0, 1),),
+            pose_refinement=False,
+            evaluate_every=10_000,
+            checkpoint_every=10_000,
+            **terms,
+        )
+        refinement = SfmRefinementConfig(max_gaussians=6000, start_step=100, stop_step=1000)
+        metrics = train_sfm_splat(
+            wall_sfm, tmp_path / name, SfmSplatConfig(training=training, refinement=refinement)
+        )
+        model, _ = load_model(tmp_path / name / "scene.ply", "cuda")
+        scales = model.params["scales"].detach().exp().sort(1).values
+        visible = model.params["opacities"].detach().sigmoid() > 0.1
+        thinness = float((scales[visible, 0] / scales[visible, 2]).median())
+        return metrics, thinness
+
+    plain, plain_thinness = run("plain")
+    solid, solid_thinness = run("solid", random_background=True, flatten_regularization=0.05)
+
+    # More of the held-out view is opaque (0.89 → 0.97 when written), the fit holds and
+    # the Gaussians become flatter discs (median thinness 0.16 → 0.03).
+    assert solid["val"]["coverage_alpha_gt_half"] > plain["val"]["coverage_alpha_gt_half"] + 0.03
+    assert solid["val"]["psnr_cc_db"] > plain["val"]["psnr_cc_db"] - 1.5
+    assert solid_thinness < 0.7 * plain_thinness

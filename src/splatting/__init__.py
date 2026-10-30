@@ -37,6 +37,12 @@ def view_splat(*args, **kwargs):
     return implementation(*args, **kwargs)
 
 
+def prune_invisible(*args, **kwargs) -> dict:
+    from .visibility import prune_invisible as implementation
+
+    return implementation(*args, **kwargs)
+
+
 def render_tour(*args, **kwargs) -> dict:
     from .tour import render_tour as implementation
 
@@ -60,6 +66,7 @@ __all__ = [
     "load_model",
     "load_scene",
     "load_sfm_scene",
+    "prune_invisible",
     "render_tour",
     "train_sfm_splat",
     "train_splat",

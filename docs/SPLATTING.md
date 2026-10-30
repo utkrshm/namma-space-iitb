@@ -166,11 +166,29 @@ Lessons from the failed runs:
   follows the capture path, with smoothed centres and slerped rotations.
 - **Whole-model tour video:** `render_tour.py <scene.ply> <run_dir> --output tour.mp4`
   (`src/splatting/tour.py`, H.264 through PyAV) shows the model from outside as well as
-  along the path. It has four parts:
+  along the path. It has five parts:
   1. A top-down build-up: each Gaussian appears when a capture camera first sees it.
   2. A 360° orbit with the ceiling cut away.
   3. An arc above each room.
-  4. An eye-level walkthrough beside the plan, with the current position marked.
+  4. A look-around inside each room (`look_around`): standing at eye level and turning
+     on the spot, in a 75° landscape view of the full model.
+  5. An eye-level walkthrough beside the plan, with the current position marked.
+
+  The look-around only turns through directions the phone filmed from nearby:
+  - *Where it stands:* the capture position whose surroundings (within 0.5 camera heights)
+    were filmed over the longest unbroken arc of headings, with at least 5 frames per
+    10° bin. A large room gets a second standing point at least 1.5 camera heights away
+    if it also offers 90° or more.
+  - *How it moves:* the eye sways to where the phone stood when it looked each way. The
+    tilt follows the phone's own tilt, kept between 35° down and level. An arc is turned
+    out and back with easing; Gaussians within 0.2 camera heights of the lens are
+    skipped.
+  - *Why:* a level view from the middle of a room shows directions nobody filmed from
+    there: smeared walls and dark gaps under the ceiling. The phone, held at chest
+    height, mostly looked 20–35° down.
+
+  Every view is rendered at 1.5× size and area-averaged (`supersample`), which removes the
+  frame-to-frame shimmer of the floor inlay and window grilles.
 
   The cut-away views take "up" from a plane fitted to the camera centres.
   - *Floor:* measured locally on a plan grid (`local_floor`), so a floor that is not one
@@ -191,6 +209,24 @@ Lessons from the failed runs:
   - *Then:* a short fine-tune on the new cameras replaces retraining from scratch.
   - *Coorg* (`sfm_loops2` → `sfm_opencv`): held-out points land within 0.16% of the scene
     radius (median), 1.4% at p90.
+- **Free-viewpoint terms (30 Oct, not adopted)** (`configs/coorg_solid/`).
+  - *Options:* the trainer has two new options. `training.random_background`
+    composites each render over a random colour, so see-through regions cost loss.
+    `training.flatten_regularization` adds the mean smallest/largest scale ratio, which
+    flattens Gaussians into discs. On the synthetic wall test they raise held-out
+    coverage from 0.89 to 0.97, and the median thinness falls from 0.16 to 0.03.
+  - *Coorg result:* an 8k-step fine-tune of `opencv/finetune_2` with both options and a
+    depth prior of 0.2 (`solid.toml`) scores 25.46 / 27.22 dB, SSIM 0.90 (against
+    25.39 / 27.37). It is better on only 7 of 20 held-out views, and in-room views barely
+    change. The smeared walls are visible Gaussians in the wrong place, and a fine-tune
+    cannot move them far.
+  - *Hidden Gaussians:* `prune_invisible.py` measures each Gaussian's largest blending
+    weight in any training view. 88% of the final model's 4.04M Gaussians cover less
+    than 1 px in every view. Removing them leaves all renders unchanged.
+  - *Regrowing:* MCMC regrowth from the 451k visible Gaussians (`regrow.toml`) lost
+    2–3 dB at the same training frames within 4k steps, with or without either new
+    term. Relocating the 3.5M dead Gaussians in one step instead made gsplat's
+    relocation NaN; the trainer now stops on a non-finite loss.
 - **Pruning is free.** Removing Gaussians below 0.02 opacity drops 69% of them with no
   held-out change. The view-independent `.splat` costs about 2.6 dB against the full-SH
   PLY.

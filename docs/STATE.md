@@ -2,7 +2,7 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `28-10-26 21:13:39 IST`
+**Last updated:** `30-10-26 11:10:00 IST`
 
 ## Current Focus
 
@@ -10,11 +10,11 @@ Work is on `feat/dense-sfm-splat`. It adds full-resolution cameras (`src/sfm/`, 
 [SFM.md](SFM.md)) and photoreal Gaussian splatting of the whole Coorg house
 (`train_sfm_splat.py` → block training → visibility merge → joint fine-tune; see
 [SPLATTING.md](SPLATTING.md#splatting-from-dense-sfm-cameras-train_sfm_splatpy--verified-on-coorg)).
-Final model: `outputs/coorg_bnb/splat_runs/blocks/merged_dense8_depth` (published in
-`results/coorg_bnb/`): merged blocks, then 8 frames/s and a depth prior. On the 20 held-out frames
-it scores 24.71 dB raw / 27.04 dB colour-corrected, SSIM 0.91; at the 518 grid it scores 25.6 dB
-raw, against 17.07 dB for the earlier VGGT splat. Worst view: 19.5 dB. 19/20 held-out views beat
-the VGGT splat.
+Final model: `outputs/coorg_bnb/splat_runs/opencv/finetune_2` (published in
+`results/coorg_bnb/`): merged blocks, 8 frames/s and a depth prior, moved onto the
+OPENCV-lens cameras and fine-tuned. On the 20 held-out frames it scores 25.39 dB raw /
+27.37 dB colour-corrected, SSIM 0.90; at the 518 grid it scores 26.3 dB raw, against
+17.07 dB for the earlier VGGT splat. The tour video now includes an in-room look-around.
 
 Earlier focus (`feat/LoopClosure`):
 Work is on `feat/LoopClosure` (from `fix/recon-section-alignment`): loop closure for the
@@ -52,6 +52,15 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
 | Surface reconstruction, scene understanding and navigation | Planned |
 
 ## Latest Decision
+
+- **Timestamp:** `30-10-26 10:30:00 IST` (outcome 11:10)
+- **Decision:** Show each room from inside with a look-around that turns only through
+  directions filmed from its standing point. Supersample tour renders. Keep the
+  free-viewpoint training terms as options; the final model is unchanged.
+- **Reference:** “Free-viewpoint quality: solid surfaces and an in-room look-around” in
+  [PLANS.md](PLANS.md).
+
+### Earlier decision (29 Oct)
 
 - **Timestamp:** `29-10-26 17:20:00 IST` (amended 21:50)
 - **Decision:** Solve Coorg's cameras with the OPENCV lens model; move the trained splat
@@ -112,6 +121,31 @@ Use: Planned, In progress, Implemented (awaiting verification), Verified, or Blo
   - Fine-tuning on the dense frames plus the depth prior gives the new final model
     `merged_dense8_depth`. Further gains need a recapture: slower passes at 199–201 s and
     72–80 s, and a loop back from the dining room.
+- **In-room look-around and free-viewpoint tests (30-10-26, recorded 11:10 IST):**
+  - *Request:* the user asked for a room without black spots, smears or merged objects,
+    and for a view from inside each room before the walkthrough.
+  - *Diagnosis:* eye-level renders along the path match the video. A level 360° turn from
+    a room's middle smears walls and leaves dark gaps under the ceiling. 88% of the
+    Gaussians never show in a training view, but removing them
+    (`prune_invisible.py`) changes nothing. The smears are visible Gaussians in the wrong
+    place, in directions nobody filmed from there.
+  - *Training tests (not adopted):*
+    - Random background plus a flatness term plus depth prior 0.2 (`solid.toml`) scores
+      25.46 / 27.22 dB and wins only 7 of 20 views.
+    - MCMC regrowth lost 2–3 dB; relocating all dead Gaussians at once gave NaN. The
+      trainer now stops on a non-finite loss.
+  - *Tour:* part 4 is a look-around per room (the living hall gets two). It picks the
+    standing point by its filmed arc and a render score that penalises close surfaces.
+    It follows the phone's tilt and trims 20° off each end of the arc. Renders are
+    supersampled 1.5×.
+  - *Visual inspection:* contact sheets every 2 s of the new tour. All four look-arounds
+    are clean: the entrance bay window and crocs; the sofa and coffee table; the TV wall
+    with the dining room through the door; the dining table, laptop and chairs. The
+    build-up no longer shows a hole in the hall floor (reveal distance 1.6 → 3 camera
+    heights). Published as `results/coorg_bnb/coorg_tour.mp4` and
+    `look_around_frames.jpg`.
+  - *Checks:* `uv run --no-sync pytest -q tests/splatting tests/sfm`: 47 passed (CUDA
+    tests on the A4000). Ruff passes on the changed files.
 - **Entrance floor and tour video (29-10-26, recorded 22:20 IST):**
   - *Problem:* the user found a black hole in the tour's plan view at 1:09. The
     single-coefficient lens solve had sunk the foyer and mat-corridor floor

@@ -139,7 +139,7 @@ def scene_extent(scene: SfmScene) -> float:
     return max(scene_scale(scene), float(np.percentile(distance, 90)))
 
 
-def render(model, world_to_camera, intrinsics, width, height, degree, mode):
+def render(model, world_to_camera, intrinsics, width, height, degree, mode, near_plane=0.01):
     from gsplat import rasterization
 
     params = model.params
@@ -161,6 +161,7 @@ def render(model, world_to_camera, intrinsics, width, height, degree, mode):
         packed=False,
         rasterize_mode=mode,
         render_mode="RGB+ED",
+        near_plane=near_plane,
     )
     return colours[0, ..., :3], colours[0, ..., 3], alpha[0, ..., 0], info
 
@@ -400,6 +401,9 @@ def train_sfm_splat(
             degree,
             config.rasterize_mode,
         )
+        if training.random_background:
+            background = torch.rand(3, device=device)
+            rgb = rgb + (1 - alpha)[..., None] * background
         if training.appearance:
             rgb = corrections.apply_colour(index, rgb)
 
@@ -408,6 +412,10 @@ def train_sfm_splat(
         loss = (1 - training.ssim_weight) * l1 + training.ssim_weight * (1 - structure)
         loss = loss + training.opacity_regularization * model.params["opacities"].sigmoid().mean()
         loss = loss + training.scale_regularization * model.params["scales"].exp().mean()
+        if training.flatten_regularization > 0:
+            log_scales = model.params["scales"]
+            flatness = (log_scales.min(1).values - log_scales.max(1).values).exp().mean()
+            loss = loss + training.flatten_regularization * flatness
         if training.depth_prior_weight > 0:
             prior = depth_priors.get(index, device)
             size = prior.shape
@@ -453,6 +461,8 @@ def train_sfm_splat(
             group["lr"] *= decay
 
         if step % training.log_every == 0 or step == training.steps - 1:
+            if not torch.isfinite(loss):
+                raise FloatingPointError(f"Non-finite loss at step {step}")
             with torch.no_grad():
                 psnr = float(-10 * torch.log10((rgb.clamp(0, 1) - target).square().mean()))
             row = {

@@ -1,9 +1,17 @@
 """Tour geometry: scene up/floor estimation, look-at cameras, cut-away filter and reveal times."""
 
 import numpy as np
+import pytest
 import torch
 
-from src.splatting.tour import cutaway_mask, first_seen, local_floor, look_at, scene_frame
+from src.splatting.tour import (
+    cutaway_mask,
+    first_seen,
+    local_floor,
+    look_around,
+    look_at,
+    scene_frame,
+)
 
 
 def _room(rotation):
@@ -95,3 +103,41 @@ def test_local_floor_keeps_a_bent_floor():
     assert global_keep[sag & near_path].mean() < 0.05  # the single floor height drops the sag
     assert local_keep[near_path].mean() > 0.9
     assert not local_keep[20000:].any()
+
+
+def _turning_cameras(heading_range_deg, count=144):
+    """Cameras at one spot (1.5 above z = 0) turning through a range of headings."""
+    camera_to_world = np.tile(np.eye(4), (count, 1, 1))
+    for index, angle in enumerate(np.radians(np.linspace(*heading_range_deg, count))):
+        forward = np.array([np.cos(angle), np.sin(angle), 0.0])
+        down = np.array([0.0, 0, -1])
+        camera_to_world[index, :3, :3] = np.column_stack((np.cross(down, forward), down, forward))
+        camera_to_world[index, :3, 3] = [0.01 * np.cos(angle), 0.01 * np.sin(angle), 1.5]
+    walk = _room(np.eye(3))[0]  # a path along x so the scene frame is defined
+    return np.concatenate((walk, camera_to_world))
+
+
+def test_look_around_sweeps_only_the_filmed_headings():
+    floor = np.column_stack((np.random.default_rng(1).uniform(-1, 9, (5000, 2)), np.zeros(5000)))
+    full = _turning_cameras((0, 355))
+    frame = scene_frame(full, floor, np.ones(len(floor)))
+    poses, info = look_around(frame, full[40:], 30)
+
+    assert info["sweep_deg"] == 360 and len(poses) == 30
+    for pose in poses:
+        rotation = pose[:3, :3]
+        assert np.allclose(rotation @ rotation.T, np.eye(3), atol=1e-9)
+        eye = -rotation.T @ pose[:3, 3]
+        assert abs(eye[2] - 1.5) < 0.05  # stays at eye height
+
+    quarter = _turning_cameras((0, 90))
+    poses, info = look_around(frame, quarter[40:], 10)
+    forward = np.array([pose[2, :3] for pose in poses])  # camera z axis in world
+    angles = np.degrees(np.arctan2(forward @ frame.side, forward @ frame.across))
+    assert 80 <= info["filmed_arc_deg"] <= 110
+    assert info["sweep_deg"] == pytest.approx(info["filmed_arc_deg"] - 40)  # 20° off each end
+    assert np.ptp(np.unwrap(np.radians(angles))) <= np.radians(75)
+
+    # A second standing point must be away from the first; here there is none.
+    poses, info = look_around(frame, quarter[40:], 10, avoid=np.array([[0.0, 0, 1.5]]))
+    assert poses == [] and info["sweep_deg"] == 0

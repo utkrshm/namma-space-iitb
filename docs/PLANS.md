@@ -14,6 +14,46 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 30-10-26 10:30:00 IST — Free-viewpoint quality: solid surfaces and an in-room look-around
+
+- **Status:** Partly adopted (30-10-26 11:10 IST). The look-around, supersampled tour
+  renders and `prune_invisible.py` are adopted. The training terms remain options; the
+  final model is unchanged.
+- **Outcome:**
+  - *Training terms:* the fine-tune (`configs/coorg_solid/solid.toml`) held the held-out
+    score: 25.46 / 27.22 dB against 25.39 / 27.37. It was better on only 7 of 20 views,
+    and in-room views were nearly unchanged.
+  - *Regrowth:* MCMC regrowth from the visible Gaussians lost 2–3 dB with or without
+    the new terms. Relocating all dead Gaussians at once gave NaN.
+  - *Why:* this capture's unfilmed directions cannot be recovered by training.
+  - *The fix:* the look-around now turns only through directions filmed from where it
+    stands, and follows the phone's tilt, as the problem statement below required.
+- **Problem:** Eye-level renders along the capture path match the video, but views from
+  the middle of a room, turned away from where the phone pointed, show smeared walls and
+  furniture and dark holes near the ceiling. Two findings:
+  - 88% of the 4.04M Gaussians never contribute even 1 px in any training view, but
+    removing them leaves these views unchanged.
+  - Rendering without view-dependent colour also leaves them unchanged.
+
+  So the smears are visible Gaussians that sit in the wrong place: semi-transparent,
+  thick layers that only reproduce the filmed angles.
+- **Decision:** Add three optional training terms and compare fine-tunes of
+  `opencv/finetune_2` on held-out views and on fixed in-room look-around views:
+  1. A random background colour per step (`training.random_background`), as in
+     Instant-NGP and Nerfstudio. Any see-through region then shows a different colour each
+     step, so training must make surfaces opaque instead of fog over black.
+  2. A flatness term (`training.flatten_regularization`): the mean ratio of each
+     Gaussian's smallest to largest scale. Thin, disc-like Gaussians lie on surfaces, as
+     in 2DGS, Gaussian Surfels and PGSR.
+  3. A stronger monocular depth prior (0.05 → 0.2), since free roaming now matters more
+     than the last few tenths of a dB near the path.
+
+  The tour gains an in-room look-around before the walkthrough. For each room it stands
+  at the eye-level point whose surroundings were filmed from the widest range of
+  directions, then turns through the headings that were actually filmed from nearby.
+- **Completion criteria:** held-out PSNR within about 0.5 dB of the current final model;
+  visibly cleaner look-around views; the new tour checked frame by frame.
+
 ## 29-10-26 17:20:00 IST — Flat-floor check, corrected cameras for the entrance, and a robust tour video
 
 - **Status:** Adopted. The tour's floor handling is in place. The cameras are now solved

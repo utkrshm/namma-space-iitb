@@ -20,7 +20,8 @@ How it was made: [docs/SFM.md](../../docs/SFM.md) and [docs/SPLATTING.md](../../
 | --- | --- |
 | `scene_ply_parts/` | **Full-quality splat**: 491k Gaussians, view-dependent colour (SH degree 3), standard 3DGS PLY (116 MB), split into parts below GitHub's 100 MB limit. Reassemble below. |
 | `scene.splat` | The same Gaussians in the 32-byte web format (view-independent colour, 15 MB) for browser viewers. |
-| `coorg_tour.mp4` | 140 s tour of the whole model (H.264, 1920×1080), in four parts: (1) a top-down build-up as the camera walks; (2) a 360° orbit with the ceiling cut away; (3) a view from above the entrance, living hall and dining room; (4) an eye-level walkthrough beside the plan, with the current position marked. Made with `render_tour.py`. |
+| `coorg_tour.mp4` | 3:24 tour of the whole model (H.264, 1920×1080), in five parts: (1) a top-down build-up as the camera walks; (2) a 360° orbit with the ceiling cut away; (3) a view from above the entrance, living hall and dining room; (4) **0:53–1:57: standing inside each room and looking around** at eye level (entrance, living hall from two spots, dining room); (5) an eye-level walkthrough beside the plan, with the current position marked. Made with `render_tour.py`. |
+| `look_around_frames.jpg` | Six frames from part 4 of the tour. |
 | `coorg_flythrough.mp4` | 2599-frame smoothed fly-through along the capture path, rendered entirely from the splat. |
 | `flythrough_frames.jpg` | Seven frames sampled from the fly-through. |
 | `heldout_overview.jpg`, `heldout/` | Frames held out from training: real video, the previous final model and this one. |
@@ -64,6 +65,13 @@ The table below uses per-view colour-corrected PSNR at half resolution:
   showed a black hole there. The remaining step is about 0.07 camera heights.
 - **Pruning:** keeping Gaussians with opacity ≥ 0.02 leaves the held-out PSNR unchanged (27.68 dB). Dropping
   view-dependent colour costs about 3.8 dB, which is what the `.splat` loses.
+
+The look-around turns only through directions the phone filmed from where it stands, and
+tilts down the way the phone did. A level 360° turn from the middle of a room shows walls
+nobody filmed from there, which come out smeared, and dark gaps under the ceiling.
+Training changes (opaque-surface and flatness terms, regrowing the Gaussians) were tried
+on 30 Oct and did not fix those views, so the model is unchanged; see
+[docs/SPLATTING.md](../../docs/SPLATTING.md).
 
 Remaining limits come from the capture. The 199–201 s frames are motion-blurred, the 72–80 s ceiling has no texture,
 and no loop returns from the dining room. Scene units are arbitrary (SfM gauge).

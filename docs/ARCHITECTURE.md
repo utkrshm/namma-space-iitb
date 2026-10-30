@@ -363,9 +363,12 @@ holdout). `merge_blocks` gives each Gaussian to the block whose cameras observe 
 position best (Σ 1/depth²). A short joint fine-tune (`--initial-ply`, no densification)
 then removes cross-block floaters. `web_export` prunes near-transparent Gaussians and writes
 a 32-byte-per-Gaussian `.splat`; `flythrough` renders a smoothed trajectory video, and
-`tour` a whole-model video (build-up, cut-away orbit, rooms, walkthrough with plan).
+`tour` a whole-model video (build-up, cut-away orbit, rooms, an in-room look-around
+through the filmed directions, walkthrough with plan).
 `transfer` moves a trained splat onto re-solved cameras of the same images (local
-similarities from shared 3D points), for a fine-tune instead of retraining.
+similarities from shared 3D points), for a fine-tune instead of retraining. `visibility`
+measures each Gaussian's blending weight in the training views and prunes those that
+never show.
 
 ### Scene geometry: mesh / TSDF
 
