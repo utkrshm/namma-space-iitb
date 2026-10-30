@@ -29,4 +29,5 @@ All held-out numbers are at 6k steps unless noted.
 | After the fix (outlier cameras dropped, robust radius) | ours | 24.0 | 0.39 | Equal to the official cameras: the SfM gap is closed. |
 | 30k steps, default (anti-aliased) | dataset | **30.24** | 0.305 | SSIM 0.909. Published 3DGS: 30.04 / 0.906 / 0.241. |
 | 30k steps, classic rasterization, init scale 0.1 | dataset | 29.97 | 0.304 | Anti-aliasing stays the default. |
+| 30k steps, 3M cap, opacity regularization 0.001 (3DGS-MCMC's Deep Blending setting) | dataset | 29.42 | 0.298 | −0.8 dB for −0.007 LPIPS; the defaults stay (1.5M, 0.01). |
 | Root cause of the SfM gap | ours | – | – | Seven "registered" images had no triangulated points, one of them 870 units away. Taken as the maximum camera distance, the scene radius scaled every learning rate about 100×. Fixed: such images are dropped, and the radius is a 95th percentile. |

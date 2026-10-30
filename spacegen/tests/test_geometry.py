@@ -8,7 +8,7 @@ import pytest
 from spacegen.config import PipelineConfig
 from spacegen.contracts import Camera, look_at
 from spacegen.fill import align_depth, probe_camera
-from spacegen.partition import kmeans
+from spacegen.partition import balanced_split
 from spacegen.scene_frame import SceneFrame, estimate_frame, find_areas
 from spacegen.support import fibonacci_directions
 
@@ -122,11 +122,18 @@ def test_align_depth_recovers_scale_and_shift():
     assert np.allclose(recovered[~known], depth[~known], rtol=1e-3)
 
 
-def test_kmeans_separates_clusters():
+def test_balanced_split_gives_equal_blocks_even_with_an_outlying_group():
     rng = np.random.default_rng(0)
-    points = np.r_[rng.normal(0, 0.1, (50, 3)), rng.normal(5, 0.1, (50, 3))]
-    labels = kmeans(points, 2)
-    assert len(set(labels[:50])) == 1 and len(set(labels[50:])) == 1 and labels[0] != labels[-1]
+    # 300 cameras in a long apartment, 15 on a far balcony.
+    points = np.r_[
+        rng.uniform([0, 0, 1], [12, 5, 1.1], (300, 3)), rng.normal([30, 2, 1], 0.2, (15, 3))
+    ]
+    labels = balanced_split(points, 3)
+    sizes = np.bincount(labels)
+    assert len(sizes) == 3 and sizes.max() - sizes.min() <= 1
+    # Blocks are spatially compact along the long axis.
+    ranges = [np.ptp(points[labels == k, 0]) for k in range(3)]
+    assert max(ranges[:2]) < 8
 
 
 def test_fibonacci_directions_cover_the_sphere():

@@ -4,7 +4,7 @@ One Gaussian budget shared by a whole house leaves every room short. On Coorg, b
 above 1.6M were unstable, and the best single model scored 21.6 dB against 27.6 dB for
 blocks. Coorg's blocks were typed-in time ranges; here they are found automatically:
 
-1. **Regions:** k-means on the training camera centres, with
+1. **Regions:** balanced median cuts of the training camera centres (`balanced_split`), with
    ``k = ceil(train images / max_images_per_block)``.
 2. **Block cameras:** a block trains on its own cameras, plus any other camera that
    observes at least ``overlap`` of the SfM points its own cameras see. Its borders are
@@ -34,20 +34,27 @@ from .splat import load_ply, save_ply, train_splat
 from .splat.model import GaussianModel
 
 
-def kmeans(points: np.ndarray, count: int, seed: int = 0, iterations: int = 50) -> np.ndarray:
-    rng = np.random.default_rng(seed)
-    centres = points[rng.choice(len(points), count, replace=False)]
-    for _ in range(iterations):
-        labels = np.linalg.norm(points[:, None] - centres[None], axis=-1).argmin(1)
-        moved = np.stack(
-            [
-                points[labels == k].mean(0) if (labels == k).any() else centres[k]
-                for k in range(count)
-            ]
-        )
-        if np.allclose(moved, centres):
-            break
-        centres = moved
+def balanced_split(points: np.ndarray, count: int) -> np.ndarray:
+    """Labels for ``count`` spatial blocks of near-equal size.
+
+    Cameras are cut along their widest axis in proportion to the blocks on each side
+    (k-d style), recursively. k-means was tried first: on a 991-frame apartment it made
+    blocks of 854 and 13 cameras (the balcony), which defeats the point of blocks.
+    """
+    labels = np.zeros(len(points), int)
+
+    def split(members: np.ndarray, first: int, blocks: int) -> None:
+        if blocks == 1:
+            labels[members] = first
+            return
+        left = blocks // 2
+        axis = np.ptp(points[members], axis=0).argmax()
+        order = members[np.argsort(points[members, axis], kind="stable")]
+        cut = round(len(order) * left / blocks)
+        split(order[:cut], first, left)
+        split(order[cut:], first + left, blocks - left)
+
+    split(np.arange(len(points)), 0, count)
     return labels
 
 
@@ -115,7 +122,7 @@ def train_in_blocks(
     centres = np.stack([c.centre for c in solution.cameras])
     count = math.ceil(len(train) / config.partition.max_images_per_block)
     labels = np.full(len(solution.cameras), -1)
-    labels[train] = kmeans(centres[train], count)
+    labels[train] = balanced_split(centres[train], count)
     # Held-out cameras join the block of their nearest training camera.
     for index in val:
         nearest = train[int(np.linalg.norm(centres[train] - centres[index], axis=1).argmin())]

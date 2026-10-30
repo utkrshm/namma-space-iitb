@@ -125,3 +125,18 @@ def test_training_recovers_a_rendered_wall(tmp_path):
     )
     assert metrics["val"]["psnr"] > 24, metrics["val"]
     assert (tmp_path / "run" / "scene.ply").exists()
+
+
+def test_first_seen_reveals_each_part_of_the_wall_with_the_camera_that_sees_it():
+    from spacegen.demo import first_seen
+
+    wall = textured_wall()
+    # Camera 0 looks at the left half from close by, camera 1 at the right half.
+    left = camera_at((-0.5, -0.6, 1.0), target=(-0.5, 0, 1.0))
+    right = camera_at((0.5, -0.6, 1.0), target=(0.5, 0, 1.0))
+    seen = first_seen(wall.params["means"].detach(), [left, right], max_depth=5.0)
+    x, z = wall.params["means"][:, 0].detach(), wall.params["means"][:, 2].detach()
+    centre_band = (z - 1.0).abs() < 0.15
+    assert (seen[centre_band & ((x + 0.5).abs() < 0.2)] == 0).all()
+    assert (seen[centre_band & ((x - 0.5).abs() < 0.2)] == 1).all()
+    assert (seen[(z - 1.0).abs() > 0.8] == 2).all()  # out of both views: never revealed
