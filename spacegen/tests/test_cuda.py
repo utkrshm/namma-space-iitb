@@ -1,5 +1,6 @@
 """GPU tests with real gsplat rendering and training (no mocks)."""
 
+import json
 import math
 
 import cv2
@@ -9,6 +10,8 @@ import torch
 
 from spacegen.config import SplatConfig
 from spacegen.contracts import Camera, look_at
+from spacegen.depth import align_depth_maps
+from spacegen.sfm import Solution
 from spacegen.splat.model import SH_C0, GaussianModel, load_ply, render_camera, save_ply
 from spacegen.splat.train import train_splat
 from spacegen.support import compute_support, support_map
@@ -140,3 +143,102 @@ def test_first_seen_reveals_each_part_of_the_wall_with_the_camera_that_sees_it()
     assert (seen[centre_band & ((x + 0.5).abs() < 0.2)] == 0).all()
     assert (seen[centre_band & ((x - 0.5).abs() < 0.2)] == 1).all()
     assert (seen[(z - 1.0).abs() > 0.8] == 2).all()  # out of both views: never revealed
+
+
+def test_metric_depth_prior_puts_a_blank_wall_in_place(tmp_path):
+    """A wall textured only at its border, with stray points over its blank middle. The
+    photometric loss cannot tell where a blank surface is, so without a prior the strays
+    stay as blobs at wrong depths. With monocular depth fitted to the (border) points, the
+    trained wall's middle must sit at the true depth."""
+    truth = textured_wall()
+    u = truth.params["means"][:, 0].detach().cpu().numpy()
+    v = truth.params["means"][:, 2].detach().cpu().numpy() - 1
+    blank = (np.abs(u) < 0.6) & (np.abs(v) < 0.6)
+    with torch.no_grad():
+        truth.params["sh0"][torch.from_numpy(blank).cuda()] = (0.85 - 0.5) / SH_C0
+    cameras = front_cameras(30)
+    paths, true_depths = [], []
+    (tmp_path / "depth").mkdir()
+    for camera in cameras:
+        with torch.no_grad():
+            rgb, depth, _, _ = render_camera(truth, camera)
+        path = tmp_path / f"{camera.name}.png"
+        cv2.imwrite(str(path), (rgb.clamp(0, 1) * 255).round().byte().cpu().numpy()[..., ::-1])
+        paths.append(path)
+        true_depths.append(depth.cpu().numpy())
+        # A monocular network's output: inverse depth up to an unknown scale and shift.
+        mono = 3.0 / np.maximum(depth.cpu().numpy(), 1e-3) + 0.4
+        np.save(tmp_path / "depth" / f"{camera.name}.npy", mono.astype(np.float16))
+
+    rng = np.random.default_rng(0)
+    border = rng.uniform(-1, 1, (4000, 2))
+    border = border[(np.abs(border) >= 0.65).any(axis=1)][:600]
+    points = np.c_[border[:, 0], rng.normal(0, 0.01, len(border)), border[:, 1] + 1]
+    # Stray points over the blank middle, in front of and behind the wall: what MCMC
+    # relocation and wrong matches leave there in real rooms. Same colour from every
+    # view, so the photometric loss has no reason to move them.
+    middle = rng.uniform(-0.55, 0.55, (300, 2))
+    strays = np.c_[middle[:, 0], rng.uniform(-0.8, 0.4, 300), middle[:, 1] + 1]
+    points = np.r_[points, strays].astype(np.float32)
+    solution = Solution(
+        cameras,
+        paths,
+        points,
+        np.full((len(points), 3), 0.5, np.float32),
+        [np.arange(len(cameras))] * len(points),
+        [{} for _ in cameras],
+    )
+    assert len(align_depth_maps(solution, tmp_path / "depth")) == len(cameras)
+
+    def blank_error(depth_prior_weight: float, name: str) -> float:
+        config = SplatConfig(
+            steps=1500,
+            max_gaussians=20_000,
+            resolution_schedule=((0, 1),),
+            holdout_every=0,
+            pose_refinement=False,
+            appearance=False,
+            depth_prior_weight=depth_prior_weight,
+            depth_prior_weight_final=depth_prior_weight / 10,
+            refine_stop=1200,
+            evaluate_every=10**9,
+            checkpoint_every=10**9,
+            log_every=500,
+        )
+        train = [i for i in range(30) if i % 5]
+        val = [i for i in range(30) if i % 5 == 0]
+        train_splat(
+            cameras,
+            paths,
+            points,
+            solution.colors,
+            tmp_path / name,
+            config,
+            depth_dir=tmp_path / "depth",
+            train_indices=train,
+            val_indices=val,
+            log=lambda _: None,
+        )
+        model = load_ply(tmp_path / name / "scene.ply")
+        errors = []
+        for index in val:
+            with torch.no_grad():
+                _, depth, _, _ = render_camera(model, cameras[index])
+                _, _, middle, _ = render_camera(
+                    truth.subset(torch.from_numpy(blank).cuda()), cameras[index]
+                )
+            inside = middle.cpu().numpy() > 0.5
+            error = np.abs(depth.cpu().numpy() - true_depths[index]) / true_depths[index]
+            errors.append(np.median(error[inside]))
+        return float(np.mean(errors))
+
+    with_prior = blank_error(0.3, "prior")
+    # The position learning rate must still follow its own schedule with the priors on (a
+    # shared variable name once multiplied it by the prior's fade, freezing the Gaussians).
+    last = json.loads((tmp_path / "prior" / "training.jsonl").read_text().splitlines()[-1])
+    run = json.loads((tmp_path / "prior" / "run.json").read_text())
+    expected = SplatConfig().means_lr_final * run["scene_radius"]
+    assert last["means_lr"] == pytest.approx(expected, rel=1e-3)
+    without = blank_error(0.0, "none")
+    assert with_prior < 0.02, (with_prior, without)
+    assert with_prior < 0.5 * without, (with_prior, without)

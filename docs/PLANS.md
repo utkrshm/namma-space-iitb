@@ -14,6 +14,65 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 31-10-26 13:04:01 IST — spacegen: metric depth and normal priors for blank walls and glass; tours that only show what was filmed
+
+- **Status:** Adopted 31-10-26 15:20 (branch `feat/spacegen`). On `vyas-room` at 10k steps,
+  against the old prior:
+  - blank-wall normal error 37.5° → 17.9°;
+  - held-out depth error 6.8% → 3.5%;
+  - held-out PSNR 23.06 → 22.86 dB (colour-corrected 28.06 → 28.22), SSIM 0.876 → 0.877.
+
+  Two corrections came out of validation:
+  - The depth prior compares *alpha-weighted* inverse depth on every pixel. With
+    normalized depth on opaque pixels only, floaters could turn transparent and leave dark
+    smudges. These were seen in runs that also had the frozen learning rate below, so that
+    fix is not measured on its own.
+  - Holes are alpha < 0.5, not < 0.9, because dark objects legitimately sit at 0.6–0.9.
+
+  A loop-variable clash (`decay`) froze the position learning rate in the first four
+  runs. It is now logged (`means_lr`) and tested.
+- **Decision:**
+  - Fit each image's monocular inverse depth to the SfM points that image sees (inverse
+    depth = a · mono + b, trimmed refit) in the depth stage, and write the fits next to
+    the depth maps.
+  - Train against that *metric* inverse depth (L1, relative to the image's median) for
+    the whole run, decaying exponentially instead of fading to zero. Pearson stays as the
+    fallback for images without a usable fit.
+  - Add a normal prior: normals of the rendered depth should match normals of the fitted
+    prior depth, weighted towards textureless pixels, where the photometric loss cannot
+    place a surface.
+  - Do not let saturated pixels (blown-out windows) pull renders darker than the clipped
+    capture.
+  - Tours and demos show only what was filmed from near each standing point: look-arounds
+    sweep the yaw range of nearby capture cameras at their tilt, never a full 360° turn
+    over generated content. A section whose checks fail is shortened or dropped instead
+    of published.
+- **Rationale and trade-offs:**
+  - Rendered depth and normals of the `vyas-room` splat show blank walls and the floor as
+    bumpy surfaces with blobs in front of them. They look right from the filmed views and
+    smear as soon as the viewer moves.
+  - A Pearson correlation per 4 × 4 patch cannot see this. It ignores scale and offset,
+    so a blob uniformly in front of a whole patch scores as well as the wall itself. It
+    also fades to zero at step 15k, while MCMC keeps moving Gaussians until step 25k.
+  - The tour's first sections were 360° turns on the filled model. In `vyas-room`, Area 2
+    had 37% unmeasured pixels, which were reported in `tour.json` and published anyway.
+    These are the "first rooms" that looked poor.
+  - Cost: a metric prior inherits the monocular network's errors. Mirrors and glass are
+    painted onto their surface instead of showing parallax. The held-out score must not
+    drop by more than 0.3 dB.
+- **Affected components:** `spacegen.depth`, `spacegen.splat.train`, `spacegen.splat.init`,
+  `spacegen.tour`, `spacegen.config`, `spacegen/docs/LEARNINGS.md`, `spacegen/docs/ARCHITECTURE.md`.
+- **Implementation steps:**
+  1. Run a 10k-step baseline and a 10k-step version with the priors on `vyas-room`.
+  2. Compare held-out PSNR, SSIM and LPIPS; rendered depth and normals; and off-path
+     views.
+  3. Gate tour sections with their checks.
+  4. Run the full pipeline again on `vyas-room` and Coorg.
+- **Completion criteria:**
+  - Walls and floors are flat in rendered normals.
+  - The held-out score holds.
+  - No tour section exceeds 5% unmeasured or 1% unrendered pixels.
+
 ## 31-10-26 00:25:16 IST — spacegen: estimate the focal length before mapping; check video solves for continuity
 
 - **Status:** Adopted (branch `feat/spacegen`).

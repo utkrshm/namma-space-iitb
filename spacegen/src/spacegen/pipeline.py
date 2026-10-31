@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from .config import PipelineConfig
-from .depth import compute_depth
+from .depth import align_depth_maps, compute_depth
 from .ingest import ingest
 from .sfm import load_solution, solve_cameras
 
@@ -84,10 +84,14 @@ def run(
 
     depth_dir = None
     if config.depth.enabled:
-        depth_dir = timed(
-            "depth",
-            lambda: compute_depth(solution.image_paths, output / "depth", config.depth, device),
-        )
+
+        def depth_stage():
+            folder = compute_depth(solution.image_paths, output / "depth", config.depth, device)
+            fits = align_depth_maps(solution, folder)
+            report["depth"] = {"images": len(solution.image_paths), "metric_fits": len(fits)}
+            return folder
+
+        depth_dir = timed("depth", depth_stage)
     if last < 3:
         return report
 

@@ -95,12 +95,26 @@ class SplatConfig:
     appearance: bool = True
     appearance_lr: float = 1e-3
     appearance_regularization: float = 1e-3
-    depth_prior_weight: float = 0.1
+    # Depth prior: L1 between rendered and fitted metric inverse depth (relative to the
+    # image's median), or a Pearson correlation for images without a fit. The weight
+    # decays exponentially from the first value to the second over the whole run; it
+    # never reaches zero, because MCMC keeps moving Gaussians until refine_stop and blank
+    # walls lose their shape again without it (vyas-room).
+    depth_prior_weight: float = 0.3
+    depth_prior_weight_final: float = 0.03
+    # Normal prior: 1 − cos between normals of the rendered and of the prior depth,
+    # weighted by exp(−(image gradient / textureless_gradient)²), i.e. mostly on blank
+    # walls, ceilings and floors, where the photometric loss cannot place a surface.
+    # Decays with the depth prior.
+    normal_prior_weight: float = 0.1
+    textureless_gradient: float = 0.05
+    # Pixels at or above this level in a channel are clipped by the sensor (blown-out
+    # windows); there the render is only penalized for being darker. Above 1 disables.
+    saturation_level: float = 0.98
     # Extra seed points from monocular depth fitted to the SfM points (0 disables). Off by
     # default: on playroom, per-image fits put seeds in free space, where they grew into
     # blobs in front of other cameras (held-out 11.9 dB against 21.9 dB at 6k steps).
     depth_seed_points: int = 0
-    depth_prior_until: int = 15_000
     random_background: bool = False
     rasterize_mode: str = "antialiased"
     # Refinement (MCMC, Kheradmand et al. 2024).
@@ -160,6 +174,12 @@ class TourConfig:
     supersample: float = 1.5
     crf: int = 20
     look_seconds: float = 14.0
+    # Look-arounds use the capture cameras within this many camera heights (horizontally)
+    # of the standing point, and only views passing the two shares below.
+    look_radius: float = 0.4
+    max_unmeasured: float = 0.05
+    max_unrendered: float = 0.01
+    min_look_deg: float = 30.0
     walk_seconds_per_metre: float = 1.2
     # Quality checks (unrendered, unmeasured, near-floater shares) on every Nth frame.
     check_every: int = 10

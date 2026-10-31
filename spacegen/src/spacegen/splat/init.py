@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..depth import read_rgb
+from ..depth import fit_inverse_depth, observed_points, read_rgb
 from ..sfm import Solution
 
 
@@ -46,36 +46,16 @@ def depth_seeds(
         mono = np.load(path).astype(np.float32)
         height, width = mono.shape
         camera = solution.cameras[index].resized(width, height)
-        local = (
-            solution.points[per_camera[index]] @ camera.world_to_camera[:3, :3].T
-            + camera.world_to_camera[:3, 3]
+        pixel, z = observed_points(
+            solution.cameras[index], solution.points[per_camera[index]], (width, height)
         )
-        z = local[:, 2]
-        uv = (
-            local[:, :2] / np.maximum(z[:, None], 1e-9) * np.diag(camera.intrinsics)[:2]
-            + camera.intrinsics[:2, 2]
-        )
-        pixel = np.round(uv).astype(int)
-        inside = (
-            (z > 0)
-            & (pixel[:, 0] >= 0)
-            & (pixel[:, 0] < width)
-            & (pixel[:, 1] >= 0)
-            & (pixel[:, 1] < height)
-        )
-        if inside.sum() < 30:
+        if len(z) < 30:
             continue
-        x = mono[pixel[inside, 1], pixel[inside, 0]]
-        y = 1 / z[inside]
-        a, b = np.polyfit(x, y, 1)
-        for _ in range(2):
-            residual = np.abs(a * x + b - y)
-            keep = residual <= np.percentile(residual, 80)
-            a, b = np.polyfit(x[keep], y[keep], 1)
+        a, b, _ = fit_inverse_depth(mono[pixel[:, 1], pixel[:, 0]], 1 / z)
         if a <= 0:
             continue
         inverse = a * mono + b
-        near, far = np.percentile(z[inside], [2, 98])
+        near, far = np.percentile(z, [2, 98])
         gy, gx = np.gradient(inverse)
         edge = np.hypot(gx, gy) / np.maximum(inverse, 1e-9) > 0.05
         stride = max(1, int(np.sqrt(height * width / per_image)))

@@ -2,9 +2,22 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `30-10-26 11:10:00 IST`
+**Last updated:** `31-10-26 15:20:00 IST`
 
 ## Current Focus
+
+Work is on `feat/spacegen`: `spacegen/`, a standalone pipeline from any indoor video to
+a Gaussian splat with tour and demo videos (see `spacegen/docs/ARCHITECTURE.md`,
+`spacegen/docs/LEARNINGS.md`, `spacegen/docs/BENCHMARKS.md`). Latest change: metric depth and
+normal priors for blank walls and glass, and tours that only show what was filmed (see
+[PLANS.md](PLANS.md), 31-10-26 13:04:01). On `vyas-room` at 10k steps:
+- held-out normal error on blank walls fell from 37.5° to 17.9°;
+- held-out PSNR went from 23.06 dB to 22.86 dB (colour-corrected 28.06 → 28.22).
+
+In progress: full reruns of `vyas-room` and Coorg with these defaults. Paused: the
+benchmark queue (`outputs/spacegen/queue`).
+
+Earlier focus (`feat/dense-sfm-splat`):
 
 Work is on `feat/dense-sfm-splat`. It adds full-resolution cameras (`src/sfm/`, see
 [SFM.md](SFM.md)) and photoreal Gaussian splatting of the whole Coorg house

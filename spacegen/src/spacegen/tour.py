@@ -3,9 +3,11 @@
 1. **Overview:** a slow orbit from above with the ceiling cut away (a "dollhouse"
    view). It drops Gaussians above 1.15 camera heights, below the floor, and far outside
    the camera path, which are never seen from above.
-2. **Look-around:** at each area's standing point, a full 360° turn at eye level. With a
-   filled model (`spacegen.fill`) every direction has content. Without one, the turn
-   covers only the longest arc of supported directions, played out and back.
+2. **Look-around:** at each area's standing point, a turn through the directions the
+   capture filmed from near there, at the phone's own tilt (`filmed_arc`). Every 5° view
+   is checked before rendering (`_checked_arc`); only the longest passing part is played,
+   out and back, and an area with too little is skipped. A full 360° turn over generated
+   content smeared and invented walls in the first areas of the vyas-room tour.
 3. **Walkthrough:** eye level along the smoothed capture path, at walking pace.
 
 Frames are rendered at ``supersample`` × the output size and area-downsampled, so fine
@@ -30,6 +32,11 @@ from .scene_frame import SceneFrame, estimate_frame
 from .splat.model import GaussianModel, load_ply, render_camera, write_json
 from .splat.train import load_cameras
 from .support import support_map
+
+# A pixel is a hole below this alpha. Trained on a black background, dark objects (black
+# clothes, shadowed shelves) settle at alpha 0.6–0.9 and still render correctly, so 0.9
+# flagged them as holes (vyas-room look-arounds); real holes are far more transparent.
+HOLE_ALPHA = 0.5
 
 
 def _intrinsics(width: int, height: int, fov_deg: float) -> np.ndarray:
@@ -73,7 +80,8 @@ def label(rgb: np.ndarray, text: str) -> np.ndarray:
 class Renderer:
     """Supersampled frames plus quality checks on every ``check_every``-th frame:
 
-    - ``unrendered``: share of pixels with alpha < 0.9 (they show black);
+    - ``unrendered``: share of pixels with alpha < ``HOLE_ALPHA`` (holes showing the black
+      background);
     - ``unmeasured``: share of rendered pixels that no capture camera saw from a nearby
       direction, i.e. generated (filled) or unsupported content (needs ``support``);
     - ``near``: share of pixels closer than 0.1 camera heights (floaters on the lens).
@@ -114,7 +122,7 @@ class Renderer:
             self.model, camera, near_plane=self.near, background=self.background
         )
         if self.frames % self.config.check_every == 0 and self.background is None:
-            self.checks["unrendered"].append(float((alpha < 0.9).float().mean()))
+            self.checks["unrendered"].append(float((alpha < HOLE_ALPHA).float().mean()))
             near = (depth < 0.1 * self.camera_height) & (alpha > 0.5)
             self.checks["near"].append(float(near.float().mean()))
             if "support" in self.model.extras:
@@ -221,20 +229,24 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
     torch.cuda.empty_cache()
 
     # 2. Look-around in every area.
-    from .fill import standing_points
-
-    stands = standing_points(frame, cameras)
     renderer = Renderer(model, config, 75.0, 0.15 * frame.camera_height, frame.camera_height)
-    for stand in stands:
+    train = [i for i, split in enumerate(splits) if split == "train"]
+    for stand in filmed_standing_points(frame, cameras, train, config):
         renderer.reset()
-        eye = frame.to_world(np.array(stand["eye_aligned"])[None])[0]
-        start = _heading(cameras[stand["camera"]], frame)
-        frames = int(config.look_seconds * fps)
-        if filled:
-            yaws = start + 2 * math.pi * ease(np.linspace(0, 1, frames))
-        else:
-            yaws = _supported_arc(model, frame, eye, start, frames, renderer)
-        pitch = math.radians(-8)
+        arc = stand["arc"]
+        checked = None
+        if arc is not None:
+            eye = frame.to_world(np.array(stand["eye_aligned"])[None])[0]
+            checked = _checked_arc(model, frame, eye, arc, config)
+        if checked is None:
+            sections.append(
+                {"name": f"look-around {stand['area']}", "frames": 0, "skipped": arc or "no arc"}
+            )
+            continue
+        (first, last), pitch, scores = checked
+        frames = int(config.look_seconds * fps * min(1.0, (last - first) / math.radians(90)))
+        half = ease(np.linspace(0, 1, max(frames // 2, 2)))
+        yaws = np.concatenate((first + (last - first) * half, last + (first - last) * half))
         for yaw in yaws:
             direction = np.array(
                 [math.cos(pitch) * math.cos(yaw), math.cos(pitch) * math.sin(yaw), math.sin(pitch)]
@@ -245,13 +257,16 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
             {
                 "name": f"look-around {stand['area']}",
                 "frames": len(yaws),
+                "sweep_deg": math.degrees(last - first),
+                "pitch_deg": math.degrees(pitch),
+                "nearby_cameras": arc["cameras"],
+                "planned_checks": scores,
                 "checks": renderer.summary(),
             }
         )
 
     # 3. Walkthrough along the smoothed capture path (training cameras, capture order).
     renderer.reset()
-    train = [i for i, split in enumerate(splits) if split == "train"]
     path = np.stack([cameras[i].centre for i in train])
     forward = np.stack([cameras[i].camera_to_world[:3, 2] for i in train])
     sigma = max(2.0, len(path) / 150)
@@ -299,33 +314,116 @@ def _heading(camera: Camera, frame: SceneFrame) -> float:
     return math.atan2(forward[1], forward[0])
 
 
-def _supported_arc(model, frame: SceneFrame, eye, start: float, frames: int, renderer: Renderer):
-    """Yaws through the longest arc whose views are mostly supported, out and back."""
+def filmed_standing_points(frame: SceneFrame, cameras, train: list[int], config: TourConfig):
+    """Per area, the training camera position with the widest filmed arc around it.
+
+    The area's middle is often a spot the phone only passed through, facing one way (in
+    vyas-room the camera nearest each area's centre had a 10° arc, against 80–110° at the
+    best spot). Ties go to more nearby cameras. The eye keeps that camera's height.
+    """
+    centres = frame.to_aligned(np.stack([c.centre for c in cameras]))
+    allowed = set(train)
+    stands = []
+    for area in frame.areas:
+        best, best_key = None, (-1.0, -1)
+        for index in area["cameras"]:
+            if index not in allowed:
+                continue
+            arc = filmed_arc(cameras, train, frame, centres[index], config)
+            if arc is None:
+                continue
+            key = (round(arc["yaws"][1] - arc["yaws"][0], 3), arc["cameras"])
+            if key > best_key:
+                best, best_key = (index, arc), key
+        if best is None:
+            stands.append({"area": area["name"], "camera": None, "eye_aligned": None, "arc": None})
+            continue
+        index, arc = best
+        stands.append(
+            {
+                "area": area["name"],
+                "camera": index,
+                "eye_aligned": centres[index].tolist(),
+                "arc": arc,
+            }
+        )
+    return stands
+
+
+def filmed_arc(cameras, train: list[int], frame: SceneFrame, eye_aligned, config: TourConfig):
+    """Yaw range and tilt that the capture filmed from near a standing point.
+
+    Training cameras within ``look_radius`` camera heights (horizontally) of the eye vote
+    for 10° heading bins. The longest circular run of filmed bins (gaps of one bin
+    allowed) is the arc, trimmed by 10° at each end. The tilt is their median pitch, so
+    the turn looks where the phone looked. Returns None with fewer than 5 such cameras.
+    """
+    centres = frame.to_aligned(np.stack([cameras[i].centre for i in train]))
+    distance = np.linalg.norm(centres[:, :2] - np.asarray(eye_aligned)[:2], axis=1)
+    nearby = [train[j] for j in np.flatnonzero(distance < config.look_radius)]
+    if len(nearby) < 5:
+        return None
+    forward = np.stack([frame.rotation @ cameras[i].camera_to_world[:3, 2] for i in nearby])
+    headings = np.degrees(np.arctan2(forward[:, 1], forward[:, 0])) % 360
+    pitch = float(np.median(np.degrees(np.arcsin(np.clip(forward[:, 2], -1, 1)))))
     bins = 36
-    good = np.zeros(bins, bool)
+    filmed = np.zeros(bins, bool)
+    filmed[(headings // 10).astype(int) % bins] = True
+    filmed |= np.roll(filmed, 1) & np.roll(filmed, -1)  # bridge one-bin gaps
+    if filmed.all():
+        first, count = 0, bins
+    else:
+        first, count, run = 0, 0, 0
+        for b in range(2 * bins):
+            run = run + 1 if filmed[b % bins] else 0
+            if count < run <= bins:
+                first, count = b - run + 1, run
+    if count == 0:
+        return None
+    low = math.radians(10 * first + 10)
+    high = math.radians(10 * (first + count) - 10)
+    if high <= low:
+        return None
+    return {
+        "yaws": (low, high),
+        "pitch_deg": float(np.clip(pitch, -40, 10)),
+        "cameras": len(nearby),
+    }
+
+
+def _checked_arc(model, frame: SceneFrame, eye, arc: dict, config: TourConfig):
+    """The longest part of ``arc`` whose views pass the checks, before anything is rendered.
+
+    Each 5° view (320 × 180) must have at most ``max_unrendered`` pixels with alpha < HOLE_ALPHA
+    and at most ``max_unmeasured`` rendered pixels that no capture camera saw from a
+    nearby direction (filled Gaussians count as unmeasured). Returns ``((first, last),
+    pitch, scores)`` in radians, or None when less than ``min_look_deg`` passes.
+    """
+    low, high = arc["yaws"]
+    pitch = math.radians(arc["pitch_deg"])
+    yaws = np.arange(low, high + 1e-6, math.radians(5))
     k = _intrinsics(320, 180, 75.0)
-    for b in range(bins):
-        yaw = 2 * math.pi * b / bins
-        direction = np.array([math.cos(yaw), math.sin(yaw), math.sin(math.radians(-8))])
+    passed, scores = [], []
+    for yaw in yaws:
+        direction = np.array(
+            [math.cos(pitch) * math.cos(yaw), math.cos(pitch) * math.sin(yaw), math.sin(pitch)]
+        )
         camera = Camera(
             "probe", 320, 180, k, look_at(eye, eye + frame.rotation.T @ direction, frame.up)
         )
-        fraction, alpha, _ = support_map(model, camera, 35.0)
-        good[b] = float(((fraction > 0.5) & (alpha > 0.5)).float().mean()) > 0.85
-    if good.all():
-        return start + 2 * math.pi * ease(np.linspace(0, 1, frames))
-    best, best_start, run_start, run_length = 0, 0, None, 0
-    for b in range(2 * bins):
-        if good[b % bins]:
-            run_start = b if run_length == 0 else run_start
-            run_length += 1
-            if run_length > best and run_length <= bins:
-                best, best_start = run_length, run_start
-        else:
-            run_length = 0
-    if best == 0:
-        return np.full(frames, start)
-    a = 2 * math.pi * best_start / bins
-    b = 2 * math.pi * (best_start + best - 1) / bins
-    half = ease(np.linspace(0, 1, frames // 2))
-    return np.concatenate((a + (b - a) * half, b + (a - b) * half))
+        fraction, alpha, _ = measured_support(model, camera)
+        unrendered = float((alpha < HOLE_ALPHA).float().mean())
+        rendered = alpha > 0.5
+        unmeasured = float((fraction[rendered] < 0.5).float().mean()) if rendered.any() else 1.0
+        scores.append(
+            {"yaw_deg": math.degrees(yaw), "unrendered": unrendered, "unmeasured": unmeasured}
+        )
+        passed.append(unrendered <= config.max_unrendered and unmeasured <= config.max_unmeasured)
+    best, best_first, run = 0, 0, 0
+    for j, ok in enumerate(passed):
+        run = run + 1 if ok else 0
+        if run > best:
+            best, best_first = run, j - run + 1
+    if best == 0 or 5 * (best - 1) < config.min_look_deg:
+        return None
+    return (yaws[best_first], yaws[best_first + best - 1]), pitch, scores

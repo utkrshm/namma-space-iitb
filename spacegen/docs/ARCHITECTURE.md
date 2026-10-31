@@ -6,7 +6,7 @@ video / images
    ▼
    │ sfm         sfm/{features, reference, sparse, undistorted, report.json}
    ▼
-   │ depth       depth/<stem>.npy                       (monocular inverse depth)
+   │ depth       depth/<stem>.npy, alignment.json      (monocular inverse depth + fit to SfM)
    ▼
    │ splat       splat/{scene.ply, cameras.json, metrics.json, checkpoint.pt}
    │             blocks/<k>/ + blocks/merged.ply         (large captures only)
@@ -40,10 +40,10 @@ These are also in `spacegen/contracts.py`.
 | --- | --- | --- | --- |
 | ingest | `ingest.py` | video file or image folder | `frames.json`: `name`, `index`, `position`, `timestamp_s`, `sharpness`, `width`, `height`. Images are upright, long side ≤ `ingest.max_long_side`. |
 | sfm | `sfm/` | `frames/` | `undistorted/{images,sparse}`: COLMAP PINHOLE model of the largest reconstruction. `report.json` covers pairs, loop check, registration and reprojection error. `load_solution` returns `Solution` (cameras in capture order, image paths, points, colours, per-point views, frame records). |
-| depth | `depth.py` | undistorted images | `depth/<stem>.npy`: float16 relative inverse depth at 1/`depth.downscale` resolution. |
-| splat | `splat_stage.py`, `splat/`, `partition.py` | `Solution`, depth | `scene.ply` (3DGS layout, SH degree 3), `cameras.json` (refined train poses; `split` = train/val), `metrics.json` (held-out PSNR/SSIM/LPIPS and `psnr_cc`), `checkpoint.pt` (including per-image `corrections`). |
+| depth | `depth.py` | undistorted images, `Solution` | `depth/<stem>.npy`: float16 relative inverse depth at 1/`depth.downscale` resolution. `depth/alignment.json`: per image stem, `a`, `b` with inverse depth in SfM units = a · mono + b (fitted to the SfM points the image observes; images with fewer than 30 points or a median relative error above 15% have no entry). |
+| splat | `splat_stage.py`, `splat/`, `partition.py` | `Solution`, depth | `scene.ply` (3DGS layout, SH degree 3), `cameras.json` (refined train poses; `split` = train/val), `metrics.json` (held-out PSNR/SSIM/LPIPS and `psnr_cc`), `checkpoint.pt` (including per-image `corrections`). Training uses the fitted depth as an L1 prior on alpha-weighted inverse depth over every pixel (texture-weighted) and a normal prior on textureless pixels, both decaying over the whole run; Pearson correlation for images without a fit. |
 | fill | `fill.py`, `support.py`, `scene_frame.py` | `splat/`, `sfm/` | `fill/scene.ply` adds `filled` (u1) and `support_0/1` (u32) properties. `fill.json` gives probes, hole shares before and after, generated share, and held-out scores after filling. |
-| tour | `tour.py` | `fill/` or `splat/`, `scene_frame.json` | `tour.mp4` (H.264 yuv420p, `tour.width` × `tour.height`) and `tour.json` (sections; per section, the mean shares of unrendered (alpha < 0.9), unmeasured and near-camera pixels). |
+| tour | `tour.py` | `fill/` or `splat/`, `scene_frame.json` | `tour.mp4` (H.264 yuv420p, `tour.width` × `tour.height`) and `tour.json` (sections; per section, the mean shares of unrendered (alpha < 0.9), unmeasured and near-camera pixels). Look-arounds sweep only the yaw range filmed by capture cameras within `tour.look_radius` of the standing point, at their median tilt; every 5° view is checked first (`tour.max_unmeasured`, `tour.max_unrendered`) and only the longest passing arc is shown, or the area is skipped (`skipped` in `tour.json`). |
 | demo | `demo.py` | as tour | `demo.mp4`: a top-down build-up in which each Gaussian appears at the first capture camera that sees it, with the path and current frustum drawn, then the highlight clips with the best min-over-clip score over 7 moments (sharpness × rendered⁴ × measured²). Generated Gaussians are left out of the build-up. `demo.turns` adds 360° turns for a filled model. `demo.json` lists the clips and scores. |
 
 ## Held-out split

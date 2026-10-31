@@ -18,9 +18,14 @@ What the trainer does, and why:
   stops near-camera floaters and out-of-memory errors in tile intersection.
 - **Per-image pose and colour (affine) corrections.** Phones auto-expose and white-balance
   every frame; without this the splat bakes exposure changes into the scene as fog.
-- **Depth prior:** patch-wise Pearson correlation with monocular inverse depth, faded to
-  zero by ``depth_prior_until``. Blank walls and glossy floors get a shape early; fine
-  detail is then left to the photometric loss (a constant weight cost 0.4 dB on Coorg).
+- **Depth and normal priors:** L1 against monocular inverse depth fitted to the SfM
+  points (`spacegen.depth.align_depth_maps`), and agreement of normals, weighted towards
+  textureless pixels. A scale-free patch Pearson correlation, the earlier prior, cannot
+  see a blob uniformly in front of a wall patch. Faded to zero at mid-training, it left
+  blank walls bumpy and smeared off the filmed path (vyas-room). The weight now decays
+  exponentially over the whole run.
+- **Clipped pixels:** where the capture is saturated (blown-out windows), a brighter
+  render is not penalized, so windows do not pull their surroundings into a grey haze.
 - **Anti-aliased rasterization** (Mip-Splatting's 2D filter in gsplat): no shimmering when
   the tour zooms out or the viewer moves away.
 
@@ -44,7 +49,7 @@ import torch.nn.functional as F
 
 from ..config import SplatConfig
 from ..contracts import Camera
-from ..depth import pearson_loss, read_rgb
+from ..depth import depth_normals, pearson_loss, read_rgb
 from .model import SH_C0, GaussianModel, load_ply, render, save_ply, write_json
 
 
@@ -140,18 +145,88 @@ class Images:
 
 
 class Priors:
-    """Monocular inverse depth per image, loaded lazily."""
+    """Monocular inverse depth per image, loaded lazily, with its metric fit if any.
+
+    ``get`` returns ``(mono, metric)``: the relative inverse depth, and the inverse depth
+    in SfM units (``a · mono + b`` from ``alignment.json``) or None without a fit.
+    """
 
     def __init__(self, folder: Path, paths: list[Path]):
         self.paths = [Path(folder) / (p.stem + ".npy") for p in paths]
+        fits_path = Path(folder) / "alignment.json"
+        fits = json.loads(fits_path.read_text()) if fits_path.exists() else {}
+        self.fits = [fits.get(p.stem) for p in paths]
         self.cache: dict[int, torch.Tensor] = {}
 
-    def get(self, index: int, device) -> torch.Tensor | None:
+    def get(self, index: int, device) -> tuple[torch.Tensor, torch.Tensor | None] | None:
         if index not in self.cache:
             if not self.paths[index].exists():
                 return None
             self.cache[index] = torch.from_numpy(np.load(self.paths[index]).astype(np.float32))
-        return self.cache[index].to(device, non_blocking=True)
+        mono = self.cache[index].to(device, non_blocking=True)
+        fit = self.fits[index]
+        return mono, None if fit is None else fit["a"] * mono + fit["b"]
+
+
+def textureless_weight(rgb: torch.Tensor, scale: float) -> torch.Tensor:
+    """Per pixel, exp(−(gradient magnitude / scale)²) of the grey image [H,W,3] → [H,W]."""
+    grey = rgb.mean(-1)[None, None]
+    padded = F.pad(grey, (1, 1, 1, 1), mode="replicate")
+    along_x = (padded[..., 1:-1, 2:] - padded[..., 1:-1, :-2]) / 2
+    along_y = (padded[..., 2:, 1:-1] - padded[..., :-2, 1:-1]) / 2
+    gradient = F.max_pool2d(torch.hypot(along_x, along_y), 3, stride=1, padding=1)[0, 0]
+    return torch.exp(-((gradient / scale) ** 2))
+
+
+def prior_losses(depth, alpha, target, intrinsics, prior, config: SplatConfig):
+    """``(depth loss, normal loss)`` of one render against its monocular prior.
+
+    ``depth`` and ``alpha`` are the render's, ``target`` the image, all at full size;
+    ``prior`` is `Priors.get`'s pair. The comparison runs at the prior's resolution.
+    """
+    mono, metric = prior
+    size = mono.shape
+    small_depth = F.interpolate(depth[None, None], size=size, mode="area")[0, 0]
+    small_alpha = F.interpolate(alpha[None, None], size=size, mode="area")[0, 0]
+    opaque = small_alpha.detach() > 0.5
+    if metric is None:
+        return patch_pearson(small_depth, mono, opaque), small_depth.new_zeros(())
+
+    # Monocular depth smears across object edges; compare only away from them.
+    gy, gx = torch.gradient(metric)
+    valid = (torch.hypot(gx, gy) / metric.clamp_min(1e-6) < 0.05) & (metric > 0)
+    if valid.sum() < 64:
+        zero = small_depth.new_zeros(())
+        return zero, zero
+    small_target = F.interpolate(target.permute(2, 0, 1)[None], size=size, mode="area")[0]
+    textureless = textureless_weight(small_target.permute(1, 2, 0), config.textureless_gradient)
+
+    # Alpha-weighted inverse depth, on every pixel. With the normalized expected depth (and
+    # only opaque pixels compared), a floater in front of a wall can satisfy the prior by
+    # turning transparent, and the black background shows through; dark smudges under the
+    # ceiling appeared that way on vyas-room. Here a hole costs as much as a wrong depth.
+    # Full weight on blank surfaces, a fifth on texture, where the photometric loss knows
+    # better.
+    inverse = small_alpha / small_depth.clamp_min(1e-6)
+    residual = (inverse - metric)[valid].abs() / metric[valid].median()
+    weight = (0.2 + 0.8 * textureless)[valid]
+    depth_loss = (weight * residual).sum() / weight.sum()
+
+    k = intrinsics.clone()
+    k[:2] *= size[1] / depth.shape[1]
+    rendered_normals = depth_normals(small_depth, k)
+    prior_normals = depth_normals(1 / metric.clamp_min(1e-6), k)
+    weight = textureless * valid * opaque
+    disagreement = 1 - (rendered_normals * prior_normals).sum(-1)
+    normal_loss = (weight * disagreement).sum() / weight.sum().clamp_min(1.0)
+    return depth_loss, normal_loss
+
+
+def photometric_l1(rgb: torch.Tensor, target: torch.Tensor, saturation_level: float):
+    """Mean absolute error; where the capture is clipped, only a darker render counts."""
+    error = rgb - target
+    clipped = target >= saturation_level
+    return torch.where(clipped, (-error).clamp_min(0), error.abs()).mean()
 
 
 def split_indices(count: int, holdout_every: int) -> tuple[list[int], list[int]]:
@@ -317,6 +392,7 @@ def train_splat(
         raise ValueError("Initial model SH degree differs from the configuration")
     corrections = Corrections(len(cameras)).to(device)
     priors = Priors(depth_dir, image_paths) if depth_dir and config.depth_prior_weight > 0 else None
+    prior_decay = config.depth_prior_weight_final / max(config.depth_prior_weight, 1e-12)
 
     rates = {
         "means": config.means_lr * radius,
@@ -384,19 +460,20 @@ def train_splat(
         if config.appearance:
             rgb = corrections.apply_colour(index, rgb)
 
-        l1 = (rgb - target).abs().mean()
+        l1 = photometric_l1(rgb, target, config.saturation_level)
         structure = ssim(rgb, target)
         loss = (1 - config.ssim_weight) * l1 + config.ssim_weight * (1 - structure)
         loss = loss + config.opacity_regularization * model.params["opacities"].sigmoid().mean()
         loss = loss + config.scale_regularization * model.params["scales"].exp().mean()
-        weight = config.depth_prior_weight * max(0.0, 1 - step / max(config.depth_prior_until, 1))
-        if priors is not None and weight > 0:
+        if priors is not None:
             prior = priors.get(index, device)
             if prior is not None:
-                size = prior.shape
-                small_depth = F.interpolate(depth[None, None], size=size, mode="area")[0, 0]
-                small_alpha = F.interpolate(alpha[None, None], size=size, mode="area")[0, 0]
-                loss = loss + weight * patch_pearson(small_depth, prior, small_alpha.detach() > 0.5)
+                depth_loss, normal_loss = prior_losses(depth, alpha, target, k, prior, config)
+                fade = prior_decay ** (step / config.steps)
+                loss = loss + fade * (
+                    config.depth_prior_weight * depth_loss
+                    + config.normal_prior_weight * normal_loss
+                )
         if config.appearance:
             loss = (
                 loss + config.appearance_regularization * corrections.colour[index].square().sum()
@@ -442,6 +519,7 @@ def train_splat(
                 "downscale": level,
                 "elapsed_s": time.perf_counter() - started,
                 "gpu_peak_gib": torch.cuda.max_memory_allocated() / 2**30,
+                "means_lr": optimizers["means"].param_groups[0]["lr"],
             }
             with log_path.open("a") as stream:
                 stream.write(json.dumps(row) + "\n")
