@@ -1,18 +1,23 @@
-"""CPU tests of the camera, configuration, scene-frame, partition, depth-fit, loss and tour code."""
+"""CPU tests of the camera, configuration, scene-frame, partition, depth-fit, loss, tour, audit
+and re-slicing code."""
 
+import json
 import math
 
 import numpy as np
 import pytest
 import torch
 
+from spacegen.audit import between, turn_deg
 from spacegen.config import PipelineConfig, TourConfig
 from spacegen.contracts import Camera, look_at
-from spacegen.depth import depth_normals, fit_inverse_depth
+from spacegen.depth import depth_normals, fit_inverse_depth, near_inverse_depth
 from spacegen.fill import align_depth, probe_camera
 from spacegen.partition import balanced_split
+from spacegen.reslice import choose_extra, with_extra_frames
 from spacegen.scene_frame import SceneFrame, estimate_frame, find_areas
-from spacegen.splat.train import photometric_l1
+from spacegen.sfm import Solution
+from spacegen.splat.train import needle_penalty, photometric_l1
 from spacegen.support import fibonacci_directions
 from spacegen.tour import filmed_arc
 
@@ -239,3 +244,91 @@ def test_filmed_arc_follows_the_cameras_near_the_standing_point():
     assert 5 <= low <= 25 and 95 <= high <= 115
     assert arc["pitch_deg"] == pytest.approx(-25, abs=0.5)
     assert arc["cameras"] == 30
+
+
+def test_in_between_view_is_halfway_in_position_and_turn():
+    k = np.array([[300.0, 0, 159.5], [0, 300.0, 119.5], [0, 0, 1]])
+    a = Camera("a", 320, 240, k, look_at(np.zeros(3), np.array([1.0, 0, 0])))
+    b = Camera("b", 320, 240, k, look_at(np.array([0.0, 1, 0]), np.array([0.0, 2, 0])))
+    middle = between(a, b)
+    assert np.allclose(middle.centre, [0, 0.5, 0])
+    assert turn_deg(a, b) == pytest.approx(90, abs=1e-6)
+    assert turn_deg(a, middle) == pytest.approx(45, abs=1e-6)
+    assert turn_deg(middle, b) == pytest.approx(45, abs=1e-6)
+
+
+def test_extra_frames_merge_in_capture_order_and_keep_point_tracks(tmp_path):
+    k = np.array([[300.0, 0, 159.5], [0, 300.0, 119.5], [0, 0, 1]])
+
+    def camera(name, x):
+        return Camera(name, 320, 240, k, look_at(np.array([x, 0, 0]), np.array([x, 0, 5.0])))
+
+    solution = Solution(
+        [camera("a", 0), camera("b", 1), camera("c", 2)],
+        [tmp_path / n for n in "abc"],
+        np.zeros((2, 3), np.float32),
+        np.zeros((2, 3), np.float32),
+        [np.array([0, 2]), np.array([1])],
+        [{"name": n, "index": i * 10, "position": i} for i, n in enumerate("abc")],
+    )
+    extra = [
+        {
+            "name": "x000015.jpg",
+            "index": 15,
+            "registered": True,
+            "camera": camera("x", 1.5).to_dict(),
+        },
+        {"name": "x000005.jpg", "index": 5, "registered": False},
+    ]
+    (tmp_path / "reslice").mkdir()
+    (tmp_path / "reslice" / "extra.json").write_text(json.dumps({"frames": extra}))
+
+    merged = with_extra_frames(solution, tmp_path)
+    assert [c.name for c in merged.cameras] == ["a", "b", "x", "c"]
+    assert merged.frames[2]["name"] == "x000015.jpg" and "camera" not in merged.frames[2]
+    assert [list(v) for v in merged.point_views] == [[0, 3], [1]]
+
+
+def test_extra_frames_come_from_weak_segments_and_avoid_held_out_frames():
+    count = 300
+    measures = {
+        "times": np.arange(count) / 30.0,
+        "sharpness": np.ones(count),
+        "motion": np.full(count, 0.002),
+    }
+    config = PipelineConfig()
+    step = 0.03  # 15 video frames of motion
+    segments = [{"start_s": 1.0, "end_s": 3.0}, {"start_s": 6.0, "end_s": 7.0}]
+    held_out = [60]  # at 2 s, inside the first segment
+    picks = choose_extra(measures, segments, {45}, held_out, step, config)
+    frames = [index for index, _ in picks]
+
+    assert frames and all(30 < f < 90 or 180 < f < 210 for f in frames)
+    assert 45 not in frames
+    # Half a step is 7.5 frames of motion.
+    assert all(abs(f - 60) >= 7.5 for f in frames)
+    assert {number for _, number in picks} == {0, 1}
+
+
+def test_needle_penalty_spares_flat_discs_and_round_blobs():
+    disc = torch.log(torch.tensor([[1.0, 1.0, 0.01]]))
+    blob = torch.log(torch.tensor([[1.0, 0.8, 0.9]]))
+    needle = torch.log(torch.tensor([[1.0, 0.05, 0.05]]))
+    assert needle_penalty(disc, 4.0) == 0
+    assert needle_penalty(blob, 4.0) == 0
+    assert needle_penalty(needle, 4.0) == pytest.approx(math.log(20 / 4))
+
+
+def test_near_surfaces_take_the_metric_depth():
+    entry = {"scale": 2.0, "near": 0.5}  # SfM points end at 2 units; 2 units per metre
+    fitted = np.array([0.25, 0.4, 0.2, 0.3], np.float32)  # inverse depth, SfM units
+    metres = np.array([2.0, 0.5, 0.25, 0.0], np.float32)  # 4, 1, 0.5 units; none
+
+    blended = near_inverse_depth(fitted, metres, entry)
+
+    # Far: the fit. Near by the metric depth (1 and 0.5 units): the metric depth. No
+    # metric depth: the fit.
+    assert np.allclose(blended, [0.25, 1.0, 2.0, 0.3])
+    tensor = near_inverse_depth(torch.from_numpy(fitted), torch.from_numpy(metres), entry)
+    assert np.allclose(tensor.numpy(), blended)
+    assert near_inverse_depth(fitted, None, entry) is fitted

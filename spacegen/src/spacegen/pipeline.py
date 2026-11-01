@@ -1,4 +1,5 @@
-"""The whole pipeline: video or images → frames → cameras → depth → splat → fill → tour → demo.
+"""The whole pipeline: video or images → frames → cameras → depth → MVS → re-slice → splat →
+audit → fill → tour → demo.
 
 Every stage writes into its own folder under the run directory and is skipped when its
 output already exists, so an interrupted run resumes where it stopped. ``report.json``
@@ -16,7 +17,7 @@ from .depth import align_depth_maps, compute_depth
 from .ingest import ingest
 from .sfm import load_solution, solve_cameras
 
-STAGES = ("ingest", "sfm", "depth", "splat", "fill", "tour", "demo")
+STAGES = ("ingest", "sfm", "depth", "reslice", "splat", "audit", "fill", "tour", "demo")
 
 
 class RunLog:
@@ -92,7 +93,23 @@ def run(
             return folder
 
         depth_dir = timed("depth", depth_stage)
+        if config.mvs.enabled:
+            from .mvs import compute_mvs
+
+            report["mvs"] = timed(
+                "mvs", lambda: compute_mvs(solution, depth_dir, config.mvs, device, log)
+            )
     if last < 3:
+        return report
+
+    if config.audit.enabled and config.audit.reslice:
+        from .reslice import reslice, with_extra_frames
+
+        report["reslice"] = timed(
+            "reslice", lambda: reslice(output, solution, depth_dir, config, device, log)
+        )
+        solution = with_extra_frames(solution, output)
+    if last < 4:
         return report
 
     from .splat_stage import build_splat
@@ -100,20 +117,32 @@ def run(
     splat = timed("splat", lambda: build_splat(solution, output, config, depth_dir, device, log))
     report["splat"] = splat
     log(f"splat: {json.dumps(splat.get('val'))}")
-    if last < 4:
+    if last < 5:
+        return report
+
+    if config.audit.enabled:
+        from .audit import audit_model
+
+        report["audit"] = timed(
+            "audit",
+            lambda: audit_model(
+                output, output / "splat", output / "audit", config.audit, device, log
+            ),
+        )
+    if last < 6:
         return report
 
     if config.fill.enabled:
         from .fill import fill_gaps
 
         report["fill"] = timed("fill", lambda: fill_gaps(output, config, device, log))
-    if last < 5:
+    if last < 7:
         return report
 
     from .tour import render_tour
 
     report["tour"] = timed("tour", lambda: render_tour(output, config.tour, device, log))
-    if last < 6:
+    if last < 8:
         return report
 
     from .demo import render_demo

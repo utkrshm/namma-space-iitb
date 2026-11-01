@@ -232,6 +232,8 @@ def _ingest_images(source: Path, output: Path, config: IngestConfig) -> dict:
 
 def _ingest_video(source: Path, output: Path, config: IngestConfig) -> dict:
     measures = measure_video(source, config)
+    # Kept for re-slicing (`spacegen.reslice`), which picks extra frames by the same rule.
+    np.savez(output / "measures.npz", **measures)
     chosen, step = select_video_frames(measures, config)
     rotation = int(measures["rotation"])
     frames, by_index = [], {index: number for number, index in enumerate(chosen)}

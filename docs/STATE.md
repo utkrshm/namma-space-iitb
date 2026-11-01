@@ -2,20 +2,50 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `31-10-26 15:20:00 IST`
+**Last updated:** `01-11-26 12:40:00 IST`
 
 ## Current Focus
 
 Work is on `feat/spacegen`: `spacegen/`, a standalone pipeline from any indoor video to
 a Gaussian splat with tour and demo videos (see `spacegen/docs/ARCHITECTURE.md`,
-`spacegen/docs/LEARNINGS.md`, `spacegen/docs/BENCHMARKS.md`). Latest change: metric depth and
-normal priors for blank walls and glass, and tours that only show what was filmed (see
-[PLANS.md](PLANS.md), 31-10-26 13:04:01). On `vyas-room` at 10k steps:
-- held-out normal error on blank walls fell from 37.5° to 17.9°;
-- held-out PSNR went from 23.06 dB to 22.86 dB (colour-corrected 28.06 → 28.22).
+`spacegen/docs/LEARNINGS.md`, `spacegen/docs/BENCHMARKS.md`). Latest change: near doors
+and mirror/window reflections ([PLANS.md](PLANS.md), 31-10-26 20:34:02):
+- metric depth (Depth Anything V2 Metric Indoor) for surfaces nearer than the SfM points;
+- gap seeds;
+- guarded screen-size pruning;
+- hard-view sampling;
+- a planar reflection layer for mirrors and windows. The floor reflector is built but
+  off by default.
 
-In progress: full reruns of `vyas-room` and Coorg with these defaults. Paused: the
-benchmark queue (`outputs/spacegen/queue`).
+On `vyas-room` at 10k steps:
+- held-out PSNR 23.14 dB vs 23.32 for the previous default (colour-corrected 29.04 vs 28.91);
+- the door leaf appears in its frames;
+- mirror views gain 0.9–1.8 dB.
+
+Full remakes (30k steps), all on Drive in "spacegen v4 — doors + mirror reflections
+(01 Nov 2026)" as `<label>_v4-doors-mirrors_{splat.zip,tour.mp4,demo.mp4}`:
+
+| Run | Held-out PSNR | Colour-corrected | SSIM | LPIPS | Against the previous build |
+|---|---|---|---|---|---|
+| `vyas_room_v4` | 22.35 | 28.32 | 0.871 | 0.304 | v3: 22.30 / 28.06 / 0.867 / 0.307; mirror frames +1.6–1.8 dB, door frames +1.1–1.4 dB |
+| `new_home_v2` | 22.50 | 26.55 | 0.873 | 0.411 | v1: 23.30 / 26.93 / 0.877 / 0.413 (same 124 frames); 52 frames lose > 1 dB, 19 gain > 1 dB |
+| `coorg` | 21.30 | 25.68 | 0.840 | 0.411 | no earlier `spacegen` build (the 29 Oct model used other cameras) |
+
+In progress: finding the `new_home` regression with 10k-step runs on its cameras
+(`outputs/spacegen/new_home_v2/exp/`): all v4 settings; without the 3f7310e priors
+(depth prior 0.3 → 0.03, normal prior, saturation); without this change's seeds,
+needle penalty, pruning guard, reflections and hard views; and without both. The v1
+build predates both groups. Paused: the benchmark queue (`outputs/spacegen/queue`).
+
+Fixed during the remakes: the fill stage rendered its probe views with gradients on, so
+with reflections (a mirrored pass per plane) Coorg ran out of GPU memory; the render is
+now under `torch.no_grad()`. The first `new_home_v2` run was killed (SIGKILL) in the
+fill stage; the resumed run peaked at 14 GB of 62 GB RAM, so the cause was outside it.
+
+Known limits:
+- standard 3DGS viewers ignore the reflection properties;
+- the door is still patchy at 10k steps;
+- the window in `vyas-room` (frames 00208, 00216) stays blown out.
 
 Earlier focus (`feat/dense-sfm-splat`):
 

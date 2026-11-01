@@ -16,8 +16,14 @@ Stage directories (under one run directory ``<out>/``)
 ------------------------------------------------------
 ``frames/``  `ingest`  → ``frames.json`` + ``images/`` (upright RGB JPEGs)
 ``sfm/``     `sfm`     → ``sparse/0`` (raw), ``undistorted/{images,sparse}`` (PINHOLE)
-``depth/``   `depth`   → ``<image stem>.npy`` monocular inverse depth
-``splat/``   `splat`   → ``scene.ply``, ``cameras.json``, ``metrics.json``
+``depth/``   `depth`   → ``<image stem>.npy`` monocular inverse depth, ``alignment.json`` fits
+``depth/mvs/`` `mvs`   → ``<image stem>.npy`` multi-view stereo z-depth, ``mvs.json``
+``depth/metric/`` `splat` → ``<image stem>.npy`` metric depth (m), ``scale.json`` (`depth`)
+``depth/reflectors.json`` `splat` → mirror, window and floor planes (`reflectors`)
+``reslice/`` `reslice` → preview model + audit, ``images/`` and ``extra.json`` (extra frames)
+``splat/``   `splat`   → ``scene.ply`` (+ ``scene.reflectors.json``), ``cameras.json``,
+                        ``metrics.json``
+``audit/``   `audit`   → ``audit.json``, ``sheet.jpg``, ``timeline.png``
 ``fill/``    `fill`    → ``scene.ply`` with the ``filled`` flag, ``fill.json``
 ``tour/``    `tour`    → ``tour.mp4``, ``tour.json``
 ``report.json``         stage timings, quality checks and the paths above

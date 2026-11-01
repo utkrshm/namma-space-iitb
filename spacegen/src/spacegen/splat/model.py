@@ -7,7 +7,9 @@ fields are written as additional PLY properties, which standard viewers ignore:
 - ``filled`` (0/1): the Gaussian was created or changed mainly by generated content
   (`spacegen.fill`), not by the capture;
 - ``support_<k>`` (uint32 × 2): bitmask of the 64 view directions from which training
-  cameras saw the Gaussian (`spacegen.support`).
+  cameras saw the Gaussian (`spacegen.support`);
+- ``reflect_<k>`` (float): reflection-strength logit for reflector plane ``k``, with the
+  planes in ``<ply stem>.reflectors.json`` (`spacegen.splat.reflect`).
 """
 
 from __future__ import annotations
@@ -22,17 +24,23 @@ from torch import nn
 
 SH_C0 = 0.28209479177387814
 PARAMETERS = ("means", "scales", "quats", "opacities", "sh0", "shn")
+OPTIONAL_PARAMETERS = ("reflect",)
 
 
 class GaussianModel(nn.Module):
-    def __init__(self, tensors: dict[str, torch.Tensor], sh_degree: int, extras=None):
+    def __init__(
+        self, tensors: dict[str, torch.Tensor], sh_degree: int, extras=None, reflectors=None
+    ):
         super().__init__()
         if not 0 <= sh_degree <= 3:
             raise ValueError("SH degree must be 0..3")
         self.sh_degree = sh_degree
+        keys = PARAMETERS + tuple(k for k in OPTIONAL_PARAMETERS if k in tensors)
         self.params = nn.ParameterDict(
-            {key: nn.Parameter(tensors[key].detach().float().contiguous()) for key in PARAMETERS}
+            {key: nn.Parameter(tensors[key].detach().float().contiguous()) for key in keys}
         )
+        # Reflector planes (`spacegen.splat.reflect`), or None.
+        self.reflectors: dict | None = reflectors
         count = len(self.params["means"])
         # Non-trainable per-Gaussian fields (``filled``, ``support``) travel with the model.
         self.extras: dict[str, torch.Tensor] = {
@@ -46,6 +54,10 @@ class GaussianModel(nn.Module):
             "sh0": (count, 1, 3),
             "shn": (count, (sh_degree + 1) ** 2 - 1, 3),
         }
+        if "reflect" in self.params:
+            if reflectors is None:
+                raise ValueError("reflect logits need reflector planes")
+            expected["reflect"] = (count, len(reflectors["planes"]))
         for key, shape in expected.items():
             if tuple(self.params[key].shape) != shape:
                 raise ValueError(f"{key}: expected {shape}, got {tuple(self.params[key].shape)}")
@@ -54,6 +66,10 @@ class GaussianModel(nn.Module):
         # Keep the non-parameter fields on the same device as the parameters.
         super()._apply(fn, recurse)
         self.extras = {key: fn(value) for key, value in self.extras.items()}
+        if self.reflectors is not None:
+            self.reflectors = {
+                k: fn(v) if torch.is_tensor(v) else v for k, v in self.reflectors.items()
+            }
         return self
 
     @property
@@ -69,12 +85,26 @@ class GaussianModel(nn.Module):
             {k: v[keep] for k, v in self.params.items()},
             self.sh_degree,
             {k: v[keep] for k, v in self.extras.items()},
+            self.reflectors,
         )
 
     @staticmethod
     def concatenate(models: list[GaussianModel]) -> GaussianModel:
         degree = models[0].sh_degree
         tensors = {k: torch.cat([m.params[k].detach() for m in models]) for k in PARAMETERS}
+        reflectors = next((m.reflectors for m in models if m.reflectors is not None), None)
+        if reflectors is not None:
+            from .reflect import ABSENT_LOGIT
+
+            planes = len(reflectors["planes"])
+            tensors["reflect"] = torch.cat(
+                [
+                    m.params["reflect"].detach()
+                    if "reflect" in m.params
+                    else torch.full((m.count, planes), ABSENT_LOGIT, device=m.device)
+                    for m in models
+                ]
+            )
         extras = {}
         for key in set().union(*(m.extras for m in models)):
             parts = []
@@ -85,7 +115,7 @@ class GaussianModel(nn.Module):
                     shape = next(x.extras[key] for x in models if key in x.extras).shape[1:]
                     parts.append(torch.zeros((m.count, *shape), dtype=torch.int64, device=m.device))
             extras[key] = torch.cat(parts)
-        return GaussianModel(tensors, degree, extras)
+        return GaussianModel(tensors, degree, extras, reflectors)
 
 
 def render(
@@ -112,6 +142,13 @@ def render(
     k = intrinsics.clone()
     k[0, 2] += 0.5
     k[1, 2] += 0.5
+    if colors is None and "reflect" in params:
+        from .reflect import render_with_reflections
+
+        degree = model.sh_degree if sh_degree is None else sh_degree
+        return render_with_reflections(
+            model, world_to_camera, k, width, height, degree, mode, near_plane, background
+        )
     if colors is None:
         colors = torch.cat((params["sh0"], params["shn"]), dim=1)
         degree = model.sh_degree if sh_degree is None else sh_degree
@@ -176,6 +213,11 @@ def save_ply(path: str | Path, model: GaussianModel, metadata: dict | None = Non
         dtype.append(("filled", "u1"))
     if "support" in extras:
         dtype += [("support_0", "<u4"), ("support_1", "<u4")]
+    if "reflect" in params:
+        columns += [
+            (f"reflect_{i}", params["reflect"][:, i]) for i in range(params["reflect"].shape[1])
+        ]
+        dtype += [(f"reflect_{i}", "<f4") for i in range(params["reflect"].shape[1])]
     vertices = np.empty(count, dtype=dtype)
     for name, value in columns:
         vertices[name] = value
@@ -192,6 +234,13 @@ def save_ply(path: str | Path, model: GaussianModel, metadata: dict | None = Non
     temporary.replace(path)
     if metadata is not None:
         write_json(path.with_suffix(".json"), metadata)
+    reflectors_path = path.with_suffix(".reflectors.json")
+    if model.reflectors is not None:
+        from .reflect import reflectors_to_dict
+
+        write_json(reflectors_path, reflectors_to_dict(model.reflectors))
+    else:
+        reflectors_path.unlink(missing_ok=True)
 
 
 def load_ply(path: str | Path, device: str = "cuda:0") -> GaussianModel:
@@ -222,4 +271,15 @@ def load_ply(path: str | Path, device: str = "cuda:0") -> GaussianModel:
         low = np.asarray(vertices["support_0"]).astype(np.uint64)
         high = np.asarray(vertices["support_1"]).astype(np.uint64)
         extras["support"] = torch.from_numpy((low | (high << np.uint64(32))).view(np.int64))
-    return GaussianModel(tensors, degree, extras).to(device)
+    reflectors = None
+    reflectors_path = Path(path).with_suffix(".reflectors.json")
+    if reflectors_path.exists():
+        from .reflect import reflectors_from_dict
+
+        reflectors = reflectors_from_dict(json.loads(reflectors_path.read_text()), device)
+        planes = len(reflectors["planes"])
+        if all(f"reflect_{i}" in names for i in range(planes)):
+            tensors["reflect"] = stack([f"reflect_{i}" for i in range(planes)])
+        else:
+            reflectors = None
+    return GaussianModel(tensors, degree, extras, reflectors).to(device)

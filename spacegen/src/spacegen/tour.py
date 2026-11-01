@@ -304,7 +304,7 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
     write_json(output / "tour.json", report)
     log(
         f"tour: {report['seconds']:.0f}s, checks per section "
-        f"{[(s['name'], s['checks']) for s in sections]}"
+        f"{[(s['name'], s.get('checks', 'skipped')) for s in sections]}"
     )
     return report
 

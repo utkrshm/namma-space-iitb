@@ -81,10 +81,29 @@ def depth_seeds(
 
 
 def with_depth_seeds(
-    solution: Solution, depth_dir, train, count: int, max_long_side: int, log=print
+    solution: Solution,
+    depth_dir,
+    train,
+    count: int,
+    max_long_side: int,
+    log=print,
+    mvs_count: int = 0,
+    gap_count: int = 0,
 ):
+    """``solution`` with monocular (``count``), MVS (``mvs_count``) and gap (``gap_count``,
+    `spacegen.mvs.gap_seeds`) seed points added."""
+    from ..mvs import gap_seeds, mvs_seeds
+
     points, colours, views = depth_seeds(solution, depth_dir, train, count, max_long_side)
-    log(f"depth seeds: {len(points)} points added to {len(solution.points)} SfM points")
+    measured = mvs_seeds(solution, depth_dir, train, mvs_count, max_long_side)
+    gaps = gap_seeds(solution, depth_dir, train, gap_count, max_long_side)
+    log(
+        f"depth seeds: {len(points)} monocular, {len(measured[0])} MVS and {len(gaps[0])} gap "
+        f"points added to {len(solution.points)} SfM points"
+    )
+    points = np.concatenate((points, measured[0], gaps[0]))
+    colours = np.concatenate((colours, measured[1], gaps[1]))
+    views = views + measured[2] + gaps[2]
     if not len(points):
         return solution
     return replace(

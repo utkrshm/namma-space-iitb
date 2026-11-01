@@ -114,7 +114,15 @@ def visibility_owner(cameras, labels: np.ndarray, points: np.ndarray, device: st
 
 
 def train_in_blocks(
-    solution: Solution, output: Path, config: PipelineConfig, depth_dir, train, val, device, log
+    solution: Solution,
+    output: Path,
+    config: PipelineConfig,
+    depth_dir,
+    train,
+    val,
+    device,
+    log,
+    reflectors=None,
 ):
     final = output / "splat"
     if (final / "metrics.json").exists():
@@ -148,6 +156,7 @@ def train_in_blocks(
             depth_dir=depth_dir,
             train_indices=block["cameras"],
             val_indices=block_val,
+            reflectors=reflectors,
             device=device,
             log=log,
         )
@@ -180,7 +189,9 @@ def train_in_blocks(
         refine_stop=int(config.partition.finetune_steps * 0.8),
         max_gaussians=0,  # keep the merged count
         pose_start_step=0,
-        depth_prior_weight=0.0,
+        # Keep the depth prior at its final weight: without it the joint fine-tune of a
+        # large capture lets blank walls bend again (new home trained this way).
+        depth_prior_weight=config.splat.depth_prior_weight_final,
         evaluate_every=10**9,
     )
     metrics = train_splat(
@@ -194,6 +205,7 @@ def train_in_blocks(
         train_indices=train,
         val_indices=val,
         initial=merged_path,
+        reflectors=reflectors,
         device=device,
         log=log,
     )

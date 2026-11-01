@@ -65,6 +65,58 @@ class DepthConfig:
     enabled: bool = True
     model: str = "depth-anything/Depth-Anything-V2-Small-hf"
     downscale: int = 4
+    # Metric depth (metres) for surfaces nearer than every SfM point of an image, where the
+    # fitted relative depth only extrapolates (`spacegen.depth.near_inverse_depth`). Empty:
+    # off. Outdoor captures may prefer the Metric-Outdoor variant.
+    metric_model: str = "depth-anything/Depth-Anything-V2-Metric-Indoor-Base-hf"
+
+
+@dataclass(frozen=True)
+class MvsConfig:
+    """Plane-sweep multi-view stereo on the depth-map grid (`spacegen.mvs`)."""
+
+    enabled: bool = True
+    sources: int = 6
+    min_angle_deg: float = 3.0
+    max_angle_deg: float = 40.0
+    planes: int = 128
+    window: int = 7
+    # Keep a depth only where NCC ≥ 1 − max_cost and the patch's grey std ≥ min_texture.
+    max_cost: float = 0.4
+    min_texture: float = 0.02
+    # Geometric check against the source depth maps.
+    consistent_views: int = 2
+    reprojection_px: float = 1.0
+    relative_depth: float = 0.01
+
+
+@dataclass(frozen=True)
+class AuditConfig:
+    """Self-audit from many viewpoints (`spacegen.audit`) and re-slicing (`spacegen.reslice`)."""
+
+    enabled: bool = True
+    long_side: int = 480
+    # Probe views around this many training cameras: turned and stepped off the path.
+    probe_cameras: int = 60
+    probe_yaw_deg: float = 30.0
+    probe_pitch_deg: float = 15.0
+    probe_shift: float = 0.25  # camera heights
+    # A segment between consecutive training cameras is weak past any of these.
+    max_unmeasured: float = 0.10
+    max_unrendered: float = 0.02
+    max_turn_deg: float = 12.0
+    max_psnr_drop: float = 2.0  # dB below the median held-out view
+    # At most this share of segments is flagged (the worst first).
+    max_weak_share: float = 0.25
+    sheet_views: int = 8
+    # Re-slicing (videos only): a short preview model is audited, then weak segments get
+    # frames at motion_step / density, kept at least half a step from held-out frames.
+    reslice: bool = True
+    preview_steps: int = 5000
+    density: int = 3
+    max_extra_share: float = 0.5  # extra frames, as a share of the registered ones
+    min_inliers: int = 60
+    min_inlier_ratio: float = 0.35
 
 
 @dataclass(frozen=True)
@@ -115,6 +167,27 @@ class SplatConfig:
     # default: on playroom, per-image fits put seeds in free space, where they grew into
     # blobs in front of other cameras (held-out 11.9 dB against 21.9 dB at 6k steps).
     depth_seed_points: int = 0
+    # Extra seed points back-projected from multi-view stereo depths (`spacegen.mvs`).
+    # These passed a multi-view check, so unlike monocular seeds they lie on surfaces.
+    mvs_seed_points: int = 200_000
+    # Seeds from fitted monocular depth confirmed by neighbouring frames, only where MVS
+    # measured nothing (`spacegen.mvs.gap_seeds`): near, blank surfaces such as door leaves.
+    gap_seed_points: int = 100_000
+    # Needle penalty: mean of max(0, log(largest axis / second largest) − log(needle_ratio)).
+    # Stretched one-axis splats streak in off-path views; flat discs are unaffected.
+    needle_weight: float = 0.01
+    needle_ratio: float = 4.0
+    # Planar reflections (`spacegen.splat.reflect`): mirrors and glass (and optionally the
+    # floor) reflect a mirrored copy of the scene. ``reflect_lr`` is the learning rate of the
+    # per-Gaussian strength logits and the per-plane Fresnel f0.
+    reflections: bool = True
+    # Look for windows, glass doors and mirrors (`spacegen.reflectors`).
+    glass_reflectors: bool = True
+    # The floor as a reflector too. Off: on vyas-room it cost 1.2 dB held-out PSNR (shoes
+    # and chair legs on the floor smeared), and its reflection pass runs on almost every
+    # step (a render took 0.15 s instead of 0.063 s). Mirrors and windows alone lost nothing.
+    floor_reflector: bool = False
+    reflect_lr: float = 0.05
     random_background: bool = False
     rasterize_mode: str = "antialiased"
     # Refinement (MCMC, Kheradmand et al. 2024).
@@ -127,7 +200,15 @@ class SplatConfig:
     refine_every: int = 100
     min_opacity: float = 0.005
     max_scale_fraction: float = 0.1
+    # Gaussians wider than this share of the image are relocated, unless they sit on the
+    # depth prior's surface (within screen_keep_depth, relative): a near door leaf needs
+    # large splats, a floater in front of the camera does not.
     max_screen_fraction: float = 0.15
+    # Share of steps that train the view with the largest recent photometric error (drawn
+    # ∝ error², `spacegen.splat.train`); the rest go through the views in shuffled order.
+    # A door seen in 3 of 344 frames otherwise gets 1% of the steps and never fills in.
+    hard_view_share: float = 0.3
+    screen_keep_depth: float = 0.1
     # Bookkeeping.
     log_every: int = 200
     evaluate_every: int = 10_000
@@ -210,6 +291,8 @@ class PipelineConfig:
     ingest: IngestConfig = field(default_factory=IngestConfig)
     sfm: SfmConfig = field(default_factory=SfmConfig)
     depth: DepthConfig = field(default_factory=DepthConfig)
+    mvs: MvsConfig = field(default_factory=MvsConfig)
+    audit: AuditConfig = field(default_factory=AuditConfig)
     splat: SplatConfig = field(default_factory=SplatConfig)
     partition: PartitionConfig = field(default_factory=PartitionConfig)
     fill: FillConfig = field(default_factory=FillConfig)

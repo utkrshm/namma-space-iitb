@@ -26,6 +26,8 @@ What the trainer does, and why:
   exponentially over the whole run.
 - **Clipped pixels:** where the capture is saturated (blown-out windows), a brighter
   render is not penalized, so windows do not pull their surroundings into a grey haze.
+- **Hard views:** 30% of the steps train a view drawn by its last error squared. A door
+  leaf filmed in 3 of 344 frames otherwise got 1% of the steps and never filled in.
 - **Anti-aliased rasterization** (Mip-Splatting's 2D filter in gsplat): no shimmering when
   the tour zooms out or the viewer moves away.
 
@@ -49,7 +51,7 @@ import torch.nn.functional as F
 
 from ..config import SplatConfig
 from ..contracts import Camera
-from ..depth import depth_normals, pearson_loss, read_rgb
+from ..depth import depth_normals, near_inverse_depth, pearson_loss, read_rgb
 from .model import SH_C0, GaussianModel, load_ply, render, save_ply, write_json
 
 
@@ -145,27 +147,53 @@ class Images:
 
 
 class Priors:
-    """Monocular inverse depth per image, loaded lazily, with its metric fit if any.
+    """Depth priors per image, loaded lazily.
 
-    ``get`` returns ``(mono, metric)``: the relative inverse depth, and the inverse depth
-    in SfM units (``a · mono + b`` from ``alignment.json``) or None without a fit.
+    ``get`` returns ``(mono, metric, measured)``:
+    - ``mono``: the relative monocular inverse depth;
+    - ``metric``: inverse depth in SfM units, or None. It is the fitted monocular depth
+      (``a · mono + b`` from ``alignment.json``; nearer than the image's SfM points, the
+      scaled metric depth, `spacegen.depth.near_inverse_depth`), replaced by the multi-view
+      stereo depth (``mvs/<stem>.npy``) wherever that exists. Without a fit, only MVS
+      pixels have a value and the rest are 0;
+    - ``measured``: a bool mask of the MVS pixels, or None.
     """
 
     def __init__(self, folder: Path, paths: list[Path]):
         self.paths = [Path(folder) / (p.stem + ".npy") for p in paths]
+        self.mvs_paths = [Path(folder) / "mvs" / (p.stem + ".npy") for p in paths]
+        self.metric_paths = [Path(folder) / "metric" / (p.stem + ".npy") for p in paths]
         fits_path = Path(folder) / "alignment.json"
         fits = json.loads(fits_path.read_text()) if fits_path.exists() else {}
         self.fits = [fits.get(p.stem) for p in paths]
-        self.cache: dict[int, torch.Tensor] = {}
+        scales_path = Path(folder) / "metric" / "scale.json"
+        scales = json.loads(scales_path.read_text()) if scales_path.exists() else {}
+        self.scales = [scales.get(p.stem) for p in paths]
+        self.cache: dict[int, tuple] = {}
 
-    def get(self, index: int, device) -> tuple[torch.Tensor, torch.Tensor | None] | None:
+    def get(self, index: int, device):
         if index not in self.cache:
             if not self.paths[index].exists():
                 return None
-            self.cache[index] = torch.from_numpy(np.load(self.paths[index]).astype(np.float32))
-        mono = self.cache[index].to(device, non_blocking=True)
+            loaded = [np.load(self.paths[index])]
+            for path in (self.mvs_paths[index], self.metric_paths[index]):
+                loaded.append(np.load(path) if path.exists() else None)
+            self.cache[index] = tuple(
+                None if v is None else torch.from_numpy(v.astype(np.float32)) for v in loaded
+            )
+        mono, mvs_depth, metres = (
+            None if v is None else v.to(device, non_blocking=True) for v in self.cache[index]
+        )
         fit = self.fits[index]
-        return mono, None if fit is None else fit["a"] * mono + fit["b"]
+        metric = None
+        if fit is not None:
+            metric = near_inverse_depth(fit["a"] * mono + fit["b"], metres, self.scales[index])
+        if mvs_depth is None or not (mvs_depth > 0).any():
+            return mono, metric, None
+        measured = mvs_depth > 0
+        mvs_inverse = torch.where(measured, 1 / mvs_depth.clamp_min(1e-9), 0.0)
+        metric = mvs_inverse if metric is None else torch.where(measured, mvs_inverse, metric)
+        return mono, metric, measured
 
 
 def textureless_weight(rgb: torch.Tensor, scale: float) -> torch.Tensor:
@@ -179,22 +207,26 @@ def textureless_weight(rgb: torch.Tensor, scale: float) -> torch.Tensor:
 
 
 def prior_losses(depth, alpha, target, intrinsics, prior, config: SplatConfig):
-    """``(depth loss, normal loss)`` of one render against its monocular prior.
+    """``(depth loss, normal loss)`` of one render against its depth prior.
 
     ``depth`` and ``alpha`` are the render's, ``target`` the image, all at full size;
-    ``prior`` is `Priors.get`'s pair. The comparison runs at the prior's resolution.
+    ``prior`` is `Priors.get`'s triple. The comparison runs at the prior's resolution.
     """
-    mono, metric = prior
+    mono, metric, measured = prior
     size = mono.shape
     small_depth = F.interpolate(depth[None, None], size=size, mode="area")[0, 0]
     small_alpha = F.interpolate(alpha[None, None], size=size, mode="area")[0, 0]
     opaque = small_alpha.detach() > 0.5
     if metric is None:
         return patch_pearson(small_depth, mono, opaque), small_depth.new_zeros(())
+    if measured is None:
+        measured = torch.zeros_like(opaque)
 
-    # Monocular depth smears across object edges; compare only away from them.
+    # Monocular depth smears across object edges; compare it only away from them. MVS
+    # depths passed a multi-view check and are compared everywhere they exist.
     gy, gx = torch.gradient(metric)
-    valid = (torch.hypot(gx, gy) / metric.clamp_min(1e-6) < 0.05) & (metric > 0)
+    smooth = torch.hypot(gx, gy) / metric.clamp_min(1e-6) < 0.05
+    valid = (metric > 0) & (measured | smooth)
     if valid.sum() < 64:
         zero = small_depth.new_zeros(())
         return zero, zero
@@ -205,21 +237,65 @@ def prior_losses(depth, alpha, target, intrinsics, prior, config: SplatConfig):
     # only opaque pixels compared), a floater in front of a wall can satisfy the prior by
     # turning transparent, and the black background shows through; dark smudges under the
     # ceiling appeared that way on vyas-room. Here a hole costs as much as a wrong depth.
-    # Full weight on blank surfaces, a fifth on texture, where the photometric loss knows
-    # better.
+    # Monocular depth gets full weight on blank surfaces and a fifth on texture, where the
+    # photometric loss knows better; measured (MVS) depth gets full weight.
     inverse = small_alpha / small_depth.clamp_min(1e-6)
     residual = (inverse - metric)[valid].abs() / metric[valid].median()
-    weight = (0.2 + 0.8 * textureless)[valid]
+    weight = torch.where(measured, 1.0, 0.2 + 0.8 * textureless)[valid]
     depth_loss = (weight * residual).sum() / weight.sum()
 
+    # Normals of the smooth monocular shape, on blank surfaces only (MVS has none there).
     k = intrinsics.clone()
     k[:2] *= size[1] / depth.shape[1]
     rendered_normals = depth_normals(small_depth, k)
     prior_normals = depth_normals(1 / metric.clamp_min(1e-6), k)
-    weight = textureless * valid * opaque
+    weight = textureless * (valid & ~measured & smooth) * opaque
     disagreement = 1 - (rendered_normals * prior_normals).sum(-1)
     normal_loss = (weight * disagreement).sum() / weight.sum().clamp_min(1.0)
     return depth_loss, normal_loss
+
+
+@torch.no_grad()
+def drop_mirror_depths(prior, camera_to_world, intrinsics, width: int, reflectors: dict):
+    """`Priors.get`'s triple without depths that lie behind a reflector plane.
+
+    Stereo and monocular depth both see a reflection as a room behind the mirror (or under
+    the floor). There the reflection layer explains the image, and the surface itself
+    gets no depth target rather than a wrong one.
+    """
+    mono, metric, measured = prior
+    if metric is None:
+        return prior
+    height, columns = metric.shape
+    k = intrinsics.clone()
+    k[:2] *= columns / width
+    ys, xs = torch.meshgrid(
+        torch.arange(height, device=metric.device, dtype=torch.float32),
+        torch.arange(columns, device=metric.device, dtype=torch.float32),
+        indexing="ij",
+    )
+    z = 1 / metric.clamp_min(1e-9)
+    local = torch.stack(((xs - k[0, 2]) / k[0, 0] * z, (ys - k[1, 2]) / k[1, 1] * z, z), -1)
+    world = local @ camera_to_world[:3, :3].T + camera_to_world[:3, 3]
+    from .reflect import behind_opaque
+
+    behind = behind_opaque(world.reshape(-1, 3), reflectors).reshape(metric.shape) & (metric > 0)
+    if not behind.any():
+        return prior
+    metric = torch.where(behind, 0.0, metric)
+    measured = None if measured is None else measured & ~behind
+    return mono, metric, measured
+
+
+def needle_penalty(log_scales: torch.Tensor, max_ratio: float) -> torch.Tensor:
+    """Mean excess of log(largest / second-largest axis) over log(``max_ratio``).
+
+    A needle (one long axis) streaks across the image as soon as the view moves off the
+    training path. Flat discs on walls (two long axes, one short) are not penalized: only
+    the ratio of the two longest axes counts, unlike the max/min ratio of PhysGaussian.
+    """
+    top = log_scales.topk(2, dim=-1).values
+    return (top[:, 0] - top[:, 1] - math.log(max_ratio)).clamp_min(0).mean()
 
 
 def photometric_l1(rgb: torch.Tensor, target: torch.Tensor, saturation_level: float):
@@ -360,6 +436,7 @@ def train_splat(
     train_indices: list[int] | None = None,
     val_indices: list[int] | None = None,
     initial: GaussianModel | str | Path | None = None,
+    reflectors: dict | None = None,
     device: str = "cuda:0",
     log=print,
 ) -> dict:
@@ -390,6 +467,14 @@ def train_splat(
         model = initial_model(points, colors, config, device)
     if model.sh_degree != config.sh_degree:
         raise ValueError("Initial model SH degree differs from the configuration")
+    if reflectors is not None and model.reflectors is None:
+        # Planes from `spacegen.reflectors` (fields as in `reflect.make_reflectors`).
+        from .reflect import INITIAL_LOGIT, reflectors_from_dict
+
+        model.reflectors = reflectors_from_dict(reflectors, device)
+        model.params["reflect"] = torch.nn.Parameter(
+            torch.full((model.count, len(reflectors["planes"])), INITIAL_LOGIT, device=device)
+        )
     corrections = Corrections(len(cameras)).to(device)
     priors = Priors(depth_dir, image_paths) if depth_dir and config.depth_prior_weight > 0 else None
     prior_decay = config.depth_prior_weight_final / max(config.depth_prior_weight, 1e-12)
@@ -402,7 +487,13 @@ def train_splat(
         "sh0": config.sh0_lr,
         "shn": config.shn_lr,
     }
+    if "reflect" in model.params:
+        rates["reflect"] = config.reflect_lr
     optimizers = {k: torch.optim.Adam([model.params[k]], lr=rates[k], eps=1e-15) for k in rates}
+    fresnel_optimizer = None
+    if model.reflectors is not None:
+        model.reflectors["f0"] = model.reflectors["f0"].detach().requires_grad_(True)
+        fresnel_optimizer = torch.optim.Adam([model.reflectors["f0"]], lr=config.reflect_lr)
     pose_optimizer = torch.optim.Adam([corrections.pose], lr=config.pose_lr)
     colour_optimizer = torch.optim.Adam([corrections.colour], lr=config.appearance_lr)
     decay = (config.means_lr_final / config.means_lr) ** (1 / config.steps)
@@ -426,16 +517,23 @@ def train_splat(
         "train": [cameras[i].name for i in train_indices],
         "val": [cameras[i].name for i in val_indices],
         "initial_gaussians": model.count,
+        "reflectors": None if reflectors is None else reflectors,
     }
     write_json(output / "run.json", metadata)
     log_path = output / "training.jsonl"
     log_path.unlink(missing_ok=True)
     order: list[int] = []
+    # Last photometric L1 of each training view; NaN until the view has been trained once.
+    view_error = torch.full((len(cameras),), float("nan"), device=device)
     started = time.perf_counter()
     for step in range(config.steps):
         if not order:
             order = list(rng.permutation(train_indices))
-        index = int(order.pop())
+        errors = view_error[train_tensor]
+        if rng.random() < config.hard_view_share and not errors.isnan().any():
+            index = int(train_tensor[torch.multinomial(errors.square(), 1)])
+        else:
+            index = int(order.pop())
         level = _level(config, step)
         degree = min(config.sh_degree, step // config.sh_interval)
 
@@ -461,19 +559,24 @@ def train_splat(
             rgb = corrections.apply_colour(index, rgb)
 
         l1 = photometric_l1(rgb, target, config.saturation_level)
+        view_error[index] = l1.detach()
         structure = ssim(rgb, target)
         loss = (1 - config.ssim_weight) * l1 + config.ssim_weight * (1 - structure)
         loss = loss + config.opacity_regularization * model.params["opacities"].sigmoid().mean()
         loss = loss + config.scale_regularization * model.params["scales"].exp().mean()
-        if priors is not None:
-            prior = priors.get(index, device)
-            if prior is not None:
-                depth_loss, normal_loss = prior_losses(depth, alpha, target, k, prior, config)
-                fade = prior_decay ** (step / config.steps)
-                loss = loss + fade * (
-                    config.depth_prior_weight * depth_loss
-                    + config.normal_prior_weight * normal_loss
-                )
+        if config.needle_weight > 0:
+            loss = loss + config.needle_weight * needle_penalty(
+                model.params["scales"], config.needle_ratio
+            )
+        prior = priors.get(index, device) if priors is not None else None
+        if prior is not None and model.reflectors is not None:
+            prior = drop_mirror_depths(prior, camera_to_world.detach(), k, width, model.reflectors)
+        if prior is not None:
+            depth_loss, normal_loss = prior_losses(depth, alpha, target, k, prior, config)
+            fade = prior_decay ** (step / config.steps)
+            loss = loss + fade * (
+                config.depth_prior_weight * depth_loss + config.normal_prior_weight * normal_loss
+            )
         if config.appearance:
             loss = (
                 loss + config.appearance_regularization * corrections.colour[index].square().sum()
@@ -483,6 +586,9 @@ def train_splat(
         for optimizer in optimizers.values():
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
+        if fresnel_optimizer is not None:
+            fresnel_optimizer.step()
+            fresnel_optimizer.zero_grad(set_to_none=True)
         if refine_pose:
             pose_optimizer.step()
         pose_optimizer.zero_grad(set_to_none=True)
@@ -496,7 +602,7 @@ def train_splat(
         colour_optimizer.zero_grad(set_to_none=True)
         with torch.no_grad():
             model.params["scales"].clamp_(max=math.log(config.max_scale_fraction * extent))
-        _prune_screen_size(model, config, info, step, max(width, height))
+        _prune_screen_size(model, config, info, step, width, height, prior)
         strategy.step_post_backward(
             model.params,
             optimizers,
@@ -567,15 +673,37 @@ def train_splat(
 
 
 @torch.no_grad()
-def _prune_screen_size(model, config: SplatConfig, info: dict, step: int, side: int) -> None:
-    """Hand Gaussians covering a large part of the image to MCMC relocation."""
+def _prune_screen_size(model, config: SplatConfig, info, step, width, height, prior=None) -> None:
+    """Hand Gaussians covering a large part of the image to MCMC relocation.
+
+    A large splat whose centre lies on the depth prior's surface is kept: a door leaf a
+    hand's width from the lens needs large splats (vyas-room lost its door this way).
+    """
     refining = config.refine_start <= step < config.refine_stop and step % config.refine_every == 0
     if config.max_screen_fraction <= 0 or not refining:
         return
     radii = info["radii"]
     if radii.dim() == 3:
         radii = radii.max(dim=-1).values
-    oversize = radii.max(dim=0).values > max(config.max_screen_fraction * side, 64)
+    oversize = radii.max(dim=0).values > max(config.max_screen_fraction * max(width, height), 64)
+    metric = None if prior is None else prior[1]
+    if oversize.any() and metric is not None:
+        candidates = oversize.nonzero()[:, 0]
+        x, y = info["means2d"][0, candidates].unbind(-1)
+        z = info["depths"][0, candidates]
+        rows = (y * metric.shape[0] / height).long()
+        columns = (x * metric.shape[1] / width).long()
+        inside = (
+            (rows >= 0) & (rows < metric.shape[0]) & (columns >= 0) & (columns < metric.shape[1])
+        )
+        found = metric[rows.clamp(0, metric.shape[0] - 1), columns.clamp(0, metric.shape[1] - 1)]
+        on_surface = (
+            inside
+            & (found > 0)
+            & (z > 0)
+            & ((1 / z.clamp_min(1e-6) - found).abs() <= config.screen_keep_depth * found)
+        )
+        oversize[candidates[on_surface]] = False
     if oversize.any():
         dead = math.log(config.min_opacity / 2 / (1 - config.min_opacity / 2))
         model.params["opacities"][oversize] = dead

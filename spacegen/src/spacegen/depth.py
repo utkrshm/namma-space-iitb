@@ -12,7 +12,11 @@ Outputs:
 - ``<out>/depth/<image stem>.npy``: float16 relative inverse depth on the image grid
   divided by ``downscale``;
 - ``<out>/depth/alignment.json``: per image stem, ``a`` and ``b`` with inverse depth in
-  SfM units = a · mono + b, the number of SfM points used and the median relative error.
+  SfM units = a · mono + b, the number of SfM points used and the median relative error;
+- ``<out>/depth/metric/<image stem>.npy``: float16 metric depth in metres (Depth Anything
+  V2 Metric Indoor) on the same grid, and ``metric/scale.json``: per image stem, ``scale``
+  (SfM units per metre) and ``near`` (the inverse depth of its nearest SfM points, 98th
+  percentile). See `near_inverse_depth`.
 """
 
 from __future__ import annotations
@@ -42,10 +46,14 @@ def read_rgb(path: Path, long_side: int | None = None, downscale: int = 1) -> np
 
 
 @torch.no_grad()
-def compute_depth(image_paths: list[Path], output_dir, config: DepthConfig, device="cuda:0"):
-    """Write one ``.npy`` per image; existing files are kept."""
+def compute_depth(
+    image_paths: list[Path], output_dir, config: DepthConfig, device="cuda:0", model_name=None
+):
+    """Write one ``.npy`` per image (``model_name`` defaults to ``config.model``); existing
+    files are kept."""
     from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
+    model_name = model_name or config.model
     target = Path(output_dir)
     target.mkdir(parents=True, exist_ok=True)
     processor = model = None
@@ -54,8 +62,8 @@ def compute_depth(image_paths: list[Path], output_dir, config: DepthConfig, devi
         if output.exists():
             continue
         if model is None:
-            processor = AutoImageProcessor.from_pretrained(config.model)
-            model = AutoModelForDepthEstimation.from_pretrained(config.model).eval().to(device)
+            processor = AutoImageProcessor.from_pretrained(model_name)
+            model = AutoModelForDepthEstimation.from_pretrained(model_name).eval().to(device)
         rgb = read_rgb(path, downscale=config.downscale)
         inputs = processor(images=rgb, return_tensors="pt").to(device)
         predicted = model(**inputs).predicted_depth[None]
@@ -200,3 +208,68 @@ def pearson_loss(rendered_depth: torch.Tensor, prior: torch.Tensor, valid: torch
     x, y = x - x.mean(), y - y.mean()
     correlation = (x * y).sum() / (x.norm() * y.norm()).clamp_min(1e-8)
     return 1 - correlation
+
+
+def align_metric_depth(solution, depth_dir, min_points: int = 30) -> dict:
+    """Scale of each image's metric depth to SfM units, and where its SfM points end.
+
+    Output: ``<depth_dir>/metric/scale.json``, ``{image stem: {"scale", "near"}}`` (see the
+    module docstring). Images that observe too few SfM points (re-sliced extra frames) take
+    the entry of the image whose camera centre is nearest. Existing entries are kept.
+    """
+    folder = Path(depth_dir) / "metric"
+    target = folder / "scale.json"
+    entries = json.loads(target.read_text()) if target.exists() else {}
+    stems = [p.stem for p in solution.image_paths]
+    if all(s in entries or not (folder / f"{s}.npy").exists() for s in stems):
+        return entries
+
+    per_camera: list[list[int]] = [[] for _ in solution.cameras]
+    for point, views in enumerate(solution.point_views):
+        for view in views:
+            per_camera[view].append(point)
+    missing = []
+    for index, stem in enumerate(stems):
+        path = folder / f"{stem}.npy"
+        if stem in entries or not path.exists():
+            continue
+        metric = np.load(path).astype(np.float32)
+        height, width = metric.shape
+        pixel, z = observed_points(
+            solution.cameras[index], solution.points[per_camera[index]], (width, height)
+        )
+        metres = metric[pixel[:, 1], pixel[:, 0]] if len(z) else np.zeros(0)
+        usable = metres > 0
+        if usable.sum() < min_points:
+            missing.append(index)
+            continue
+        entries[stem] = {
+            "scale": float(np.median(z[usable] / metres[usable])),
+            "near": float(np.percentile(1 / z[usable], 98)),
+        }
+
+    known = [i for i, s in enumerate(stems) if s in entries]
+    if known:
+        centres = np.stack([solution.cameras[i].centre for i in known])
+        for index in missing:
+            gap = np.linalg.norm(centres - solution.cameras[index].centre, axis=1)
+            entries[stems[index]] = dict(entries[stems[known[int(np.argmin(gap))]]])
+    target.write_text(json.dumps(entries, indent=1) + "\n")
+    return entries
+
+
+def near_inverse_depth(inverse, metric, entry):
+    """Fitted inverse depth (``a · mono + b``, SfM units) with near surfaces from metric depth.
+
+    The affine fit is only constrained between an image's SfM points. A surface nearer than
+    all of them, such as a door leaf passed on the way through a doorway, is extrapolated:
+    on vyas-room 00038–00041 the fit put the same door at 5.3, 1.0, 1.0 and 1.7 units,
+    while metric depth said 0.84, 0.67, 0.77 and 0.65 m. Where either depth is nearer than
+    the image's nearest SfM points (``entry["near"]``), the metric depth × ``entry["scale"]``
+    is used. Works on numpy arrays and torch tensors; ``metric`` in metres, 0 = none.
+    """
+    if metric is None or entry is None:
+        return inverse
+    metric_inverse = (metric > 0) / (entry["scale"] * metric + (metric <= 0))
+    near = ((metric_inverse > entry["near"]) | (inverse > entry["near"])) & (metric > 0)
+    return metric_inverse * near + inverse * ~near

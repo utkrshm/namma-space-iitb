@@ -14,6 +14,203 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 31-10-26 20:34:02 IST — spacegen: near doors (gap seeds, guarded screen-size pruning) and planar reflections (floor, windows, mirrors)
+
+- **Status:** Adopted with changes, 01-11-26 00:05 IST (branch `feat/spacegen`): gap
+  seeds, guarded pruning, metric near depth (below), and reflections for mirrors and
+  windows only (`floor_reflector = false`). 10k-step `vyas-room` results (held-out PSNR /
+  colour-corrected PSNR / SSIM / LPIPS; training time). The times of `fix1`, `door2` and
+  `mirrors` are inflated: a `new home` splat was training on the same GPU (it had not
+  stopped). Timed alone, one render took 0.063 s plain, 0.15 s with the floor reflector
+  and 0.21 s with all five planes.
+  - needle baseline: 23.32 / 28.91 / 0.888 / 0.298; 934 s;
+  - everything, floor included (`fix1`): 22.89 / 27.74 / 0.879 / 0.322; 3404 s. Training
+    views also fell (29.85 → 28.82 colour-corrected), so the fit itself was worse. Shoes
+    and chair legs on the floor smeared. Gaussians under the floor fell from 318k to 119k.
+    The floor is in nearly every frame, so its reflection pass ran on almost every step;
+  - door fixes, no reflections (`norefl`): 23.44 / 29.07 / 0.889 / 0.292;
+  - plus metric near depth (`door2`): 23.64 / 29.04 / 0.891 / 0.293; 1756 s;
+  - plus mirror and window reflections (`mirrors`): 23.31 / 29.13 / 0.889 / 0.292;
+    2402 s. The mirror views gained 0.9–1.8 dB (00312, 00320), and the person filming
+    now shows in the mirror. 00128 lost 2 dB.
+  - The door leaf was still mostly missing: a dark haze in 00038, nothing in 00040–00041.
+    Trained on frames 00038–00063 alone (3k steps), the door formed: it is seen in 3 of
+    344 training frames, so it got 1% of the steps. Hence *hard views*
+    (`hard_view_share = 0.3`): 30% of the steps train a view drawn ∝ its last L1².
+  - plus hard views (`hard`, the adopted setting): 23.14 / 29.04 / 0.889 / 0.296; 1193 s
+    alone on the GPU (needle: 934 s). The door is back, wood grain included, though
+    still patchy at 10k steps: held-out 00040 +3.7 dB, training 00041 +8 dB.
+- **Metric near depth (added 31-10-26 22:40 IST).** The gap seeds alone did not bring the
+  door back: each image's affine depth fit only holds between its SfM points, all far
+  away, and put the door at 5.3, 1.0, 1.0 and 1.7 units in 00038–00041, so the
+  neighbour check rejected it and the depth prior pulled it away. Depth Anything V2
+  Metric Indoor (Base) said 0.84, 0.67, 0.77 and 0.65 m. Each image's metric depth gets a
+  scale from its SfM points (`depth.align_metric_depth`, ``depth/metric/``), and pixels
+  nearer than the image's nearest SfM points take it (`depth.near_inverse_depth`) in the
+  depth prior, the gap seeds and the reflector fit. The door then sat at 0.97, 0.97 and
+  1.01 units.
+- **Original proposal.** The user asked to remake all three captures with door and
+  glass-reflection fixes, and to upload the new splats and videos to Drive.
+- **Decision:**
+  - **Doors.** On `vyas-room` the door leaf next to the lens (frames 00038–00041) is
+    missing even in its own *training* frames. The fitted depth shows it, but nothing
+    seeds it: no SfM points (no texture), no MVS depth (the sweep range starts at
+    0.7 × the nearest SfM depth), and the monocular seeds keep to the SfM depth range.
+    MCMC only adds Gaussians next to existing ones. Two changes:
+    - *gap seeds* (`mvs.gap_seeds`, 100k points): fitted monocular depth where MVS
+      measured nothing, away from depth edges, kept only where 2 of the 4 neighbouring
+      frames' fitted depths agree (2 px, 3%);
+    - screen-size pruning (`max_screen_fraction`) no longer removes a large Gaussian whose
+      centre lies on the depth prior's surface (within 10%). A near door needs large
+      splats; a floater in front of the camera is still removed.
+  - **Planar reflections** (`splat/reflect.py`, `reflectors.py`), after MirrorGaussian
+    (ECCV 2024) and TR-Gaussians (2025). The image is T + Σ_k S_k · F_k(θ) · R_k:
+    - T is the ordinary render;
+    - S_k is each Gaussian's learned strength, gated to Gaussians within 0.03 camera
+      heights of plane k and inside its extent;
+    - F_k is Schlick Fresnel with a learned f0 per plane;
+    - R_k is the scene mirrored across plane k, rendered at half resolution.
+    - Depth comes from T, so the priors keep the surface on its plane.
+    - The planes are the floor (from `scene_frame`) plus windows, glass doors and mirrors
+      from an ADE20K segmenter (Mask2Former). Each of these is a vertical plane fitted to
+      the depth *around* the region, merged across ≥ 3 frames, with an extent.
+    - Floors and mirrors are *opaque*: SfM, MVS and gap seeds behind them, and depth
+      targets behind them, are dropped as reflections. Windows are not opaque, since what
+      is seen through them is real.
+- **Rationale and trade-offs:**
+  - The needle model of `vyas-room` had 318k of 1.5M Gaussians (21%) under the tiled
+    floor, a mirrored room imitating the reflections; there were more behind both mirrors.
+    That geometry fights the depth prior, and it is why reflections looked painted on.
+  - Costs:
+    - one extra half-resolution render per visible reflector per step;
+    - a 0.9 GB segmenter download;
+    - standard 3DGS viewers ignore the `reflect_<k>` properties and show the scene
+      without reflections. Our renders (tour and demo videos) include them.
+  - Not handled: curved or non-planar glass, and moving people in mirrors.
+- **Affected components:** `mvs.py`, `reflectors.py`, `splat/reflect.py`,
+  `splat/model.py` (optional `reflect` parameter, `<ply stem>.reflectors.json`),
+  `splat/train.py`, `splat_stage.py`, `partition.py`, `config.py`, tests.
+- **Implementation steps:**
+  1. Code, a GPU test (a mirror floor matches the explicitly mirrored scene) and a PLY
+     round trip.
+  2. A 10k-step `vyas-room` comparison against the needle run: held-out metrics, audit,
+     renders of the door, the mirrors and the floor.
+  3. Full runs of `vyas-room`, `new home` and `coorg_bnb`; tour and demo videos; upload to
+     Drive under new names.
+- **Completion criteria:**
+  - held-out PSNR no worse;
+  - the door present in its training frames;
+  - Gaussians under the floor mostly gone;
+  - reflections in the mirrors and on the floor moving with the viewpoint in off-path
+    renders.
+
+## 31-10-26 18:32:39 IST — spacegen: depth prior in the joint fine-tune of large captures; needle penalty
+
+- **Status:** Needle penalty adopted 31-10-26 19:58 IST (branch `feat/spacegen`). On
+  `vyas-room` at 10k steps (MVS on in both runs), it changed held-out PSNR from 23.38 to
+  23.32, colour-corrected PSNR from 28.91 to 28.91, SSIM from 0.889 to 0.888 and LPIPS
+  from 0.301 to 0.298. Weak audit segments fell from 14 to 12, and probe-view
+  unrendered/unmeasured shares were within ±0.005. Splats with axis ratio above 4 fell
+  from 31% to 3.2%, and the 99th-percentile ratio from 19.7 to 4.3. The block
+  fine-tune fix waits on the `new home` re-run.
+- **Decision:**
+  - The joint fine-tune after merging spatial blocks (`partition.train_in_blocks`) keeps
+    the depth prior at `depth_prior_weight_final`. It used to set the weight to 0, so on
+    `new home` (and on any capture above `max_images_per_block`) the final 10k steps over
+    all frames ran without depth.
+  - Add a needle penalty: `needle_weight` · mean(max(0, log(largest axis / second
+    largest) − log(`needle_ratio`))), with weight 0.01 and ratio 4. Splats stretched
+    along one axis streak in off-path views. Flat discs on walls are unaffected, unlike
+    PhysGaussian's max/min ratio, which would fight surfaces.
+- **Rationale and trade-offs:** Depth is what holds surfaces in place between
+  viewpoints. Both changes keep the model grounded in the video, with no generated
+  content, and they cost nothing at render time. The penalty could blur thin real
+  structures (cables, grille bars); check held-out views and off-path probe views.
+- **Affected components:** `spacegen/src/spacegen/partition.py`, `splat/train.py`,
+  `config.py`, tests.
+- **Implementation steps:**
+  1. Code and a unit test.
+  2. A 10k-step `vyas-room` comparison: held-out views plus audit probes.
+  3. Re-run `new home` with the full pipeline (MVS, re-slicing, blocks with the prior).
+  4. Zip the results and upload them to Drive.
+- **Completion criteria:** held-out PSNR no worse, fewer unrendered or unmeasured pixels
+  in probe views, and `new home` off-path renders visibly steadier.
+
+## 31-10-26 17:44:06 IST — spacegen: multi-view stereo, a self-audit from many viewpoints, and denser frames where the audit finds gaps
+
+- **Status:** Adopted 31-10-26 19:58 IST (branch `feat/spacegen`). On the full `vyas-room` run (30k
+  steps), held-out PSNR went from 21.91 to 22.30, colour-corrected PSNR from 27.82 to
+  28.06, SSIM from 0.864 to 0.867 and LPIPS from 0.311 to 0.307. Weak audit segments fell
+  from 17 to 9. Re-slicing added 50 frames, all of which registered (median 1641
+  inliers). The near door edge and the bright window are still weak.
+- **Decision:**
+  - **MVS stage** (`spacegen.mvs`, after `depth`). This is our own GPU plane sweep in
+    PyTorch, because the installed pycolmap has no CUDA and COLMAP's patch-match needs it.
+    - For each image, take up to 6 source views with the most shared SfM points and a
+      useful triangulation angle.
+    - Sweep inverse-depth planes over the image's SfM depth range. Cost is window NCC,
+      averaged over the best half of the sources so occluded views do not vote.
+    - Refine the winner to sub-plane precision.
+    - Keep only depths confirmed by at least 2 source views' depth maps: reprojection
+      within 1 px and depth within 1%.
+    - Output: per image, metric depth on the depth-map grid (0 = none) and `mvs/mvs.json`.
+    - Uses: on textured pixels, the depth prior trains against MVS depth instead of the
+      fitted monocular depth. Fused MVS points join the seeds of the initial model.
+  - **Self-audit** (`spacegen.audit`). Render a model from:
+    - the held-out views (PSNR, SSIM, error map);
+    - probe views around sampled training cameras (yaw ±30°, pitch ±15°, steps of 0.25
+      camera heights), counting unrendered and unsupported pixels.
+
+    Each problem is pinned to the video time of the nearest training cameras. Output:
+    `audit.json` (per-view scores, weak time segments with the reason) and a contact sheet
+    of the worst views.
+  - **Re-slice stage** (`spacegen.reslice`, video captures only, before `splat`).
+    1. Train a short preview splat (5k steps) and audit it.
+    2. For the weak segments, decode the video again and choose extra frames at a
+       third of the motion step.
+    3. Undistort them with the solved lens: an exact remap built from COLMAP's camera
+       model.
+    4. Register each by PnP. ALIKED + LightGlue matches to the two nearest registered
+       frames, lifted to 3D with the MVS depth, or else with the preview's rendered depth.
+    5. Accept a frame only with enough inliers and a pose between its neighbours.
+    6. Compute depth and MVS for the accepted frames too. They join training only, never
+       the held-out set.
+  - **Final audit stage** after `splat`, for the report. The new stage order is ingest, sfm,
+    depth, mvs, reslice, splat, audit, fill, tour, demo.
+- **Rationale and trade-offs:**
+  - Monocular depth is a learned guess fitted with two numbers per image. MVS measures
+    depth from parallax, so it is right on textured surfaces (furniture, floor patterns,
+    window frames), where the fitted monocular depth bends.
+  - The audit answers "what is missing where" from the model itself, rather than only
+    from the training views, which the model can memorise.
+  - Re-slicing spends frames only where the reconstruction is weak, instead of halving the
+    motion step for the whole video, which doubles SfM time (Coorg took 3 h).
+  - Extra frames sit between training frames, so they are closer to some held-out frames
+    than the regular training frames are. Held-out metrics with and without re-slicing are
+    not strictly comparable. Report both, plus the probe checks, which have no held-out
+    leak. Keep extra frames at least half a motion step away from any held-out frame.
+- **Affected components:**
+  - new `spacegen/src/spacegen/{mvs,audit,reslice}.py`;
+  - `pipeline.py` (stages);
+  - `splat/train.py` (`Priors` uses MVS);
+  - `splat/init.py` (MVS seeds);
+  - `splat_stage.py` (extra frames are train-only);
+  - `config.py`;
+  - tests, ARCHITECTURE, STATE.
+- **Implementation steps:**
+  1. MVS module, with a GPU test on a synthetic textured scene with known depth.
+  2. Use MVS in training and seeding.
+  3. Audit module and test.
+  4. Re-slice module and test (PnP recovers a known pose).
+  5. Pipeline wiring.
+  6. Run on `vyas-room`: compare MVS depth with the fitted monocular depth, inspect audit
+     sheets, and compare probe checks and held-out metrics against the current model.
+- **Completion criteria:**
+  - Tests pass.
+  - On `vyas-room`, MVS covers most textured pixels with error below the monocular fit.
+  - The audit flags the regions seen as poor in renders.
+  - The re-sliced run is no worse on held-out views and better on probe checks.
+
 ## 31-10-26 13:04:01 IST — spacegen: metric depth and normal priors for blank walls and glass; tours that only show what was filmed
 
 - **Status:** Adopted 31-10-26 15:20 (branch `feat/spacegen`). On `vyas-room` at 10k steps,

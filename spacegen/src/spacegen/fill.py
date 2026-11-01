@@ -238,9 +238,9 @@ def fill_gaps(run: Path, config: PipelineConfig, device: str, log) -> dict:
     log(f"fill: direction support computed ({time.perf_counter() - started:.0f}s)")
     model.extras["filled"] = torch.zeros(model.count, dtype=torch.int64, device=device)
 
-    from .sfm import load_solution
+    from .reslice import run_solution
 
-    solution = load_solution(Path(run) / "sfm", Path(run) / "frames")
+    solution = run_solution(run)
     frame = estimate_frame([cameras[i] for i in train], solution.points)
     write_json(Path(run) / "scene_frame.json", frame.to_dict())
     stands = standing_points(frame, [cameras[i] for i in range(len(cameras))])
@@ -273,7 +273,8 @@ def fill_gaps(run: Path, config: PipelineConfig, device: str, log) -> dict:
     pseudo, records = [], []
     for number, probe in enumerate(probes):
         fraction, alpha, depth = support_map(model, probe, fill.support_angle_deg)
-        rgb, _, _, _ = render_camera(model, probe)
+        with torch.no_grad():  # the reflection pass would otherwise keep its graph on the GPU
+            rgb, _, _, _ = render_camera(model, probe)
         rgb_np = (rgb.clamp(0, 1) * 255).round().byte().cpu().numpy()
         alpha_np, fraction_np, depth_np = (t.cpu().numpy() for t in (alpha, fraction, depth))
         hole = hole_mask(alpha_np, fraction_np, fill)
@@ -356,9 +357,9 @@ def distil(
     )
     corrections = Corrections(len(cameras)).to(device)
     corrections.load_state_dict(state["corrections"])
-    from .sfm import load_solution
+    from .reslice import run_solution
 
-    solution = load_solution(Path(run) / "sfm", Path(run) / "frames")
+    solution = run_solution(run)
     images = Images(solution.image_paths, splat.max_long_side, {2})
     radius = scene_radius([cameras[i] for i in train])
     rates = {
