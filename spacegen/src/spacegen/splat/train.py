@@ -520,13 +520,16 @@ def train_splat(
         "reflectors": None if reflectors is None else reflectors,
     }
     write_json(output / "run.json", metadata)
+    # A run killed after its last step (while saving or evaluating) restarts from there.
+    first = config.steps if _load_finished(output, model, corrections, config.steps) else 0
     log_path = output / "training.jsonl"
-    log_path.unlink(missing_ok=True)
+    if not first:
+        log_path.unlink(missing_ok=True)
     order: list[int] = []
     # Last photometric L1 of each training view; NaN until the view has been trained once.
     view_error = torch.full((len(cameras),), float("nan"), device=device)
     started = time.perf_counter()
-    for step in range(config.steps):
+    for step in range(first, config.steps):
         if not order:
             order = list(rng.permutation(train_indices))
         errors = view_error[train_tensor]
@@ -715,10 +718,28 @@ def _save(output: Path, model, corrections, step: int) -> None:
         "sh_degree": model.sh_degree,
         "params": {k: v.detach().cpu() for k, v in model.params.items()},
         "corrections": {k: v.detach().cpu() for k, v in corrections.state_dict().items()},
+        "f0": None if model.reflectors is None else model.reflectors["f0"].detach().cpu(),
     }
     temporary = output / "checkpoint.pt.tmp"
     torch.save(payload, temporary)
     temporary.replace(output / "checkpoint.pt")
+
+
+@torch.no_grad()
+def _load_finished(output: Path, model, corrections, steps: int) -> bool:
+    """Load ``checkpoint.pt`` into the model if it holds the last step of this run."""
+    path = output / "checkpoint.pt"
+    if not path.exists():
+        return False
+    state = torch.load(path, map_location=model.device, weights_only=True)
+    if state["step"] < steps or set(state["params"]) != set(model.params):
+        return False
+    for key, value in state["params"].items():
+        model.params[key] = torch.nn.Parameter(value.to(model.device))
+    corrections.load_state_dict(state["corrections"])
+    if state.get("f0") is not None and model.reflectors is not None:
+        model.reflectors["f0"] = state["f0"].to(model.device)
+    return True
 
 
 @torch.no_grad()

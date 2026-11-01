@@ -2,7 +2,7 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `01-11-26 12:40:00 IST`
+**Last updated:** `01-11-26 18:15:00 IST`
 
 ## Current Focus
 
@@ -31,16 +31,18 @@ Full remakes (30k steps), all on Drive in "spacegen v4 — doors + mirror reflec
 | `new_home_v2` | 22.50 | 26.55 | 0.873 | 0.411 | v1: 23.30 / 26.93 / 0.877 / 0.413 (same 124 frames); 52 frames lose > 1 dB, 19 gain > 1 dB |
 | `coorg` | 21.30 | 25.68 | 0.840 | 0.411 | no earlier `spacegen` build (the 29 Oct model used other cameras) |
 
-In progress: finding the `new_home` regression with 10k-step runs on its cameras
-(`outputs/spacegen/new_home_v2/exp/`): all v4 settings; without the 3f7310e priors
-(depth prior 0.3 → 0.03, normal prior, saturation); without this change's seeds,
-needle penalty, pruning guard, reflections and hard views; and without both. The v1
-build predates both groups. Paused: the benchmark queue (`outputs/spacegen/queue`).
+The `new_home` regression ([PLANS.md](PLANS.md), 01-11-26 14:45:00): the settings are
+not the cause (10k-step tests: this change's seeds, pruning guard, reflections and hard
+views help `new home` by 0.37 dB; the 3f7310e priors cost it 0.25 dB). The block count
+is: 2 blocks instead of 3 score 22.97 / 26.79 against 22.50 / 26.55 (v1: 23.30 / 26.93),
+and frames near block borders still lose up to 6 dB. Next: single-model training for
+captures that fit in GPU memory. GPU tests pass (01-11-26 18:05). Paused: the benchmark
+queue (`outputs/spacegen/queue`).
 
 Fixed during the remakes: the fill stage rendered its probe views with gradients on, so
 with reflections (a mirrored pass per plane) Coorg ran out of GPU memory; the render is
-now under `torch.no_grad()`. The first `new_home_v2` run was killed (SIGKILL) in the
-fill stage; the resumed run peaked at 14 GB of 62 GB RAM, so the cause was outside it.
+now under `torch.no_grad()`. The first `new_home_v2` run and the 2-block test were killed by systemd-oomd (memory
+pressure in the user session, not RAM use); training now resumes from a final checkpoint.
 
 Known limits:
 - standard 3DGS viewers ignore the reflection properties;

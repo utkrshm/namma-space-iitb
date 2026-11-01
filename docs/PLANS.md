@@ -14,6 +14,48 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 01-11-26 14:45:00 IST — spacegen: why `new_home_v2` scores below `new_home` (v1)
+
+- **Status:** tested, 01-11-26 18:10 IST. 2 blocks of 524 (`new_home_v3`, finished from
+  its final checkpoint after a systemd-oomd kill; the reflector f0 is from before the
+  joint fine-tune) score 22.97 / 26.79 / 0.876 / 0.412, against 22.50 / 26.55 for 3 blocks
+  and 23.30 / 26.93 for v1: the block count explains about 60% of the loss. Per frame
+  (mean over the 124 held-out frames: v1 23.73, 3 blocks 22.86, 2 blocks 23.37) frames
+  00280, 00096 and 00160 still lose about 6 dB, while the 10k-step single model renders
+  00280 at 23.4 dB. So splitting into blocks costs quality on the frames near block
+  borders. The joint fine-tune of the 2.59M-Gaussian merged model trained in 6.4 GB of
+  GPU memory, so `new home` fits one model. Next: train captures up to a few thousand
+  frames as a single model (`max_images_per_block` well above the frame count, a larger
+  `max_gaussians`), keeping blocks for larger captures. The systemd-oomd kills (07:06
+  and 17:52) led to training resuming from a final checkpoint, which now also stores
+  the reflectors' f0.
+- **Finding:** the full `new_home_v2` build (v4 settings, 30k steps) scores 22.50 / 26.55
+  dB held-out (PSNR / colour-corrected) against 23.30 / 26.93 for v1, on the same
+  cameras and 124 held-out frames. v1 predates two groups of settings: G1, the 3f7310e
+  priors (depth prior 0.3 → 0.03 instead of 0.1, normal prior, saturation); and G2, the
+  31-10-26 changes (MVS and gap seeds, needle penalty, pruning guard, reflections, hard
+  views). 10k-step single-model runs on the v2 cameras (`outputs/spacegen/new_home_v2/exp`),
+  held-out PSNR / colour-corrected / SSIM / LPIPS:
+  - all v4 settings: 22.28 / 26.52 / 0.870 / 0.410;
+  - G1 off: 22.53 / 26.81 / 0.872 / 0.406;
+  - G2 off: 21.91 / 25.96 / 0.861 / 0.430;
+  - both off (v1 settings): 21.95 / 26.17 / 0.864 / 0.428;
+  - no metric near depth: 22.07 / 26.54 / 0.869 / 0.412;
+  - with the re-sliced extra frames: 22.46 / 26.61 / 0.871 / 0.419.
+  So G2 helps `new home` (+0.37 dB), G1 costs it about 0.25 dB (it was added for the
+  blank walls of `vyas-room`), and metric near depth and the extra frames are neutral to
+  slightly positive. None of the settings explains the 0.8 dB. Per frame, the 10k run
+  with v4 settings beats the full v2 build on the frames that regressed (00280: 23.4 vs
+  18.2 dB; 00160: 27.1 vs 24.2), so the loss comes from how the full build trained.
+  The clearest difference: the extra frames raised the training set from 868 to 1048
+  images, so the partition (`max_images_per_block = 450`) made 3 blocks of about 350
+  instead of v1's 2 blocks of about 434.
+- **Test:** rebuild the splat with `partition.max_images_per_block = 600` (2 blocks of
+  524) into `outputs/spacegen/new_home_v3`, otherwise the v4 settings.
+- **Completion criteria:** if 2 blocks recover v1's held-out score, raise the block
+  size default (GPU memory permitting) or make the partition count blocks before adding
+  the extra frames; otherwise look at the merge and the joint fine-tune.
+
 ## 31-10-26 20:34:02 IST — spacegen: near doors (gap seeds, guarded screen-size pruning) and planar reflections (floor, windows, mirrors)
 
 - **Status:** Adopted with changes, 01-11-26 00:05 IST (branch `feat/spacegen`): gap

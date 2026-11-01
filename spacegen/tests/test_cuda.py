@@ -129,6 +129,23 @@ def test_training_recovers_a_rendered_wall(tmp_path):
     assert metrics["val"]["psnr"] > 24, metrics["val"]
     assert (tmp_path / "run" / "scene.ply").exists()
 
+    # A run killed after its last step starts again from the checkpoint, without training.
+    (tmp_path / "run" / "scene.ply").unlink()
+    again = train_splat(
+        cameras,
+        paths,
+        points.astype(np.float32),
+        np.full((400, 3), 0.5, np.float32),
+        tmp_path / "run",
+        config,
+        train_indices=train,
+        val_indices=val,
+        log=lambda _: None,
+    )
+    assert abs(again["val"]["psnr"] - metrics["val"]["psnr"]) < 1e-3
+    assert again["train_seconds"] < metrics["train_seconds"] / 3
+    assert (tmp_path / "run" / "scene.ply").exists()
+
 
 def test_first_seen_reveals_each_part_of_the_wall_with_the_camera_that_sees_it():
     from spacegen.demo import first_seen
