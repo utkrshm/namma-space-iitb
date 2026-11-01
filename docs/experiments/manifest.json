@@ -1,0 +1,198 @@
+{
+  "branches": [
+    {
+      "ref": "docs/documentation-scaffold",
+      "commit": "de194466912c003f18b8c3cbbd3ba989ad83bf19",
+      "state_sha256": null
+    },
+    {
+      "ref": "feat/dense-sfm-splat",
+      "commit": "08849f2c9e27e18b1f88e5fcb8ea3db9d74ec54c",
+      "state_sha256": "75fe38d417d4f172c82aa15c2d2ec15d475a0c4465c125d286521830fa24d413"
+    },
+    {
+      "ref": "feat/preprocessing",
+      "commit": "9a5c548033205f2a77f6c80c24dde3bccd2817f0",
+      "state_sha256": "e991eb53afd4a86a0e4e600ffb90eefc024d1e75f7821b25360da976905cc061"
+    },
+    {
+      "ref": "feat/reconstruction",
+      "commit": "175fb6fc9c872d3f469ceba83b6429455b6b368d",
+      "state_sha256": "458c9b11f5b9ec281ab98671bc6c018f397b7c9c86c299bbfb480b4e6f4ed170"
+    },
+    {
+      "ref": "feat/spacegen",
+      "commit": "ef5b5f4409a93173f6ea2268f944dadf215a7da9",
+      "state_sha256": "75fe38d417d4f172c82aa15c2d2ec15d475a0c4465c125d286521830fa24d413"
+    },
+    {
+      "ref": "feat/splatting",
+      "commit": "12b76559ed459d9fd8cc3d79f8646f58bcf27736",
+      "state_sha256": "4be301633b0629c679a700d5d63099eb0f5151cb74b6772d21285e1a22be43a3"
+    },
+    {
+      "ref": "master",
+      "commit": "0cb32762cc222faf95dd570509ec83e34efdf240",
+      "state_sha256": "e991eb53afd4a86a0e4e600ffb90eefc024d1e75f7821b25360da976905cc061"
+    },
+    {
+      "ref": "research/home-video-preprocessing",
+      "commit": "fa572009ae5f56baba7f6fcf8dd67ad8bb94eedc",
+      "state_sha256": "039c6ead17437fbec014eb4ecf29a9213c897c15abf1f632e1ffe85b195793a2"
+    },
+    {
+      "ref": "run/spacegen-new-home-runpod-20261031",
+      "commit": "ef5b5f4409a93173f6ea2268f944dadf215a7da9",
+      "state_sha256": "75fe38d417d4f172c82aa15c2d2ec15d475a0c4465c125d286521830fa24d413"
+    },
+    {
+      "ref": "run/spacegen-room-runpod-20261031",
+      "commit": "ef5b5f4409a93173f6ea2268f944dadf215a7da9",
+      "state_sha256": "75fe38d417d4f172c82aa15c2d2ec15d475a0c4465c125d286521830fa24d413"
+    },
+    {
+      "ref": "origin/feat/LoopClosure",
+      "commit": "9b708664d7fb9a1a617f01a86f8c40af3a25d00b",
+      "state_sha256": "d60c961d1788bd72b49649dd59a7cf443b494397c95c613e2213a5540bb914e2"
+    },
+    {
+      "ref": "origin/feat/dense-sfm-splat",
+      "commit": "08849f2c9e27e18b1f88e5fcb8ea3db9d74ec54c",
+      "state_sha256": "75fe38d417d4f172c82aa15c2d2ec15d475a0c4465c125d286521830fa24d413"
+    },
+    {
+      "ref": "origin/feat/floor",
+      "commit": "b5878d22e19ddc3dabf35e624209423777458b01",
+      "state_sha256": "8a11528477f752cee22c38ea52b823b89bff57f6400f84a172f2dece375722d4"
+    },
+    {
+      "ref": "origin/feat/reconstruction",
+      "commit": "b2ba7808c2b4d023d237b8b00acadfdbd9032a6e",
+      "state_sha256": "ff50ef2a668b7664bc2135593a57168870b04a1f6534f207c14562bc262e8dba"
+    },
+    {
+      "ref": "origin/feat/spacegen",
+      "commit": "3f7310e6e37a34ed08b4f4f89465a9235d3b9ef5",
+      "state_sha256": "ffb92c04ee3475cef7c26925a621fd4210e012da55907060e99dee11b9a7a5f4"
+    },
+    {
+      "ref": "origin/feat/splatting",
+      "commit": "12b76559ed459d9fd8cc3d79f8646f58bcf27736",
+      "state_sha256": "4be301633b0629c679a700d5d63099eb0f5151cb74b6772d21285e1a22be43a3"
+    },
+    {
+      "ref": "origin/fix/recon-mv-refinement",
+      "commit": "6c7d1684edb6ff788a947fce4df9921a11bf1d49",
+      "state_sha256": "eb036db806c1d09b8eedb81c1f29727a34f29a61ab2f22c592b0cc85f045e571"
+    },
+    {
+      "ref": "origin/fix/recon-section-alignment",
+      "commit": "e3123e57f3a5da126d23f9eecb12b0b1edbadb84",
+      "state_sha256": "d77952e0e082dcc1323343c1077465a391bf109dd03bc4be26fceaa4a63d3b59"
+    },
+    {
+      "ref": "origin/master",
+      "commit": "0cb32762cc222faf95dd570509ec83e34efdf240",
+      "state_sha256": "e991eb53afd4a86a0e4e600ffb90eefc024d1e75f7821b25360da976905cc061"
+    }
+  ],
+  "state_history": [
+    {
+      "commit": "3f7310e6e37a34ed08b4f4f89465a9235d3b9ef5",
+      "blob": "64a2c2326e1e8f51e66d942df4b56724f519c6ff"
+    },
+    {
+      "commit": "08849f2c9e27e18b1f88e5fcb8ea3db9d74ec54c",
+      "blob": "af85acf1941058f88bdbe811d383bb684314acb0"
+    },
+    {
+      "commit": "3c046731d1726689dfaae70612ec058e2902131f",
+      "blob": "0402523a1178635dd47dfbaaed16c17fe37880d5"
+    },
+    {
+      "commit": "63edbc866721b515ff6655b238e214a42714afa7",
+      "blob": "b3e19f9875af854273b3ad9e9e5888be4ce2509d"
+    },
+    {
+      "commit": "8c5ffa3e5562e1ec0db3c0953f036bf416a99021",
+      "blob": "dc5ad8206465629f6e7c24a0503b0f5a80359508"
+    },
+    {
+      "commit": "79b8f2082529a2f5719625c68a40c201d4bc9e36",
+      "blob": "86c21036e741450b1a1d1de795d0cc6aff4e6546"
+    },
+    {
+      "commit": "2065261561e51db806260d94ac5c8b4e6d33f553",
+      "blob": "00baa04e5ad5884151490a7fe6dabccfafb08e3d"
+    },
+    {
+      "commit": "c82a898df48bc3f2e5680a53484bd03a849098f8",
+      "blob": "ab5336a4e9d3fae2bd76148dcc30747266f73514"
+    },
+    {
+      "commit": "bd5080f11be43c9b087d249445be21a8e9a0d1aa",
+      "blob": "2ddcdd13d9362cc190cd8617b6e2ef323caee2a3"
+    },
+    {
+      "commit": "c70f460cf1fe22c762bd7692ce896a7c619108f6",
+      "blob": "b17d44c8d6133d0ea6ef45d4eb05e60d97896763"
+    },
+    {
+      "commit": "12b76559ed459d9fd8cc3d79f8646f58bcf27736",
+      "blob": "1b1e7a29fd45a3786e2334a384d92066a67a98ee"
+    },
+    {
+      "commit": "9b708664d7fb9a1a617f01a86f8c40af3a25d00b",
+      "blob": "60436d2e685702943cdaf2c9ae130b58261bfe9f"
+    },
+    {
+      "commit": "b2ba7808c2b4d023d237b8b00acadfdbd9032a6e",
+      "blob": "87ad0e705ab457cc95e471bde8e01c336c198d79"
+    },
+    {
+      "commit": "d728d47d34aeb1b121a86f07d32a2d203294c26a",
+      "blob": "b224fc39c6a8c0d79137e9cbbdc559d61c419fe0"
+    },
+    {
+      "commit": "6c7d1684edb6ff788a947fce4df9921a11bf1d49",
+      "blob": "5d3bd071c2d625a84f0ac91731bc0b4c22164736"
+    },
+    {
+      "commit": "f129c84c7b822c294c9093fd0ca63f0cc7c9197a",
+      "blob": "4ad027c4abe631e986ffa4410bc37885463405ed"
+    },
+    {
+      "commit": "b58e70a215595ba48a28e38d08cfd03a492fcbf5",
+      "blob": "3ad643b1976886eb17c034debbd20f693640ae2b"
+    },
+    {
+      "commit": "89075b0e659f657787f7476eb9ae741851f0b4e3",
+      "blob": "b4fbcea271a4fdd8e419eedfecef12a46a459d27"
+    },
+    {
+      "commit": "b5878d22e19ddc3dabf35e624209423777458b01",
+      "blob": "5f0a4cc0c25a88bb0530275cdb78880202b36284"
+    },
+    {
+      "commit": "175fb6fc9c872d3f469ceba83b6429455b6b368d",
+      "blob": "2fa7ef6f787a1e1c56143824dd95531378a3575d"
+    },
+    {
+      "commit": "7b4ae463cc764b08da118019e523ef71a114064c",
+      "blob": "c4a764f7cc5d5fccd057d3f50fcb7ca8e9361489"
+    },
+    {
+      "commit": "2776e00f64badfe58d4e28146f42f37711477763",
+      "blob": "6b068a9f66273f681e027809bafdc23ce19b2fa4"
+    },
+    {
+      "commit": "c210754dc1909f5b1960ca226b3f2ea1064592db",
+      "blob": "91b34ed3b00b96420cde3dcc8dd52e37907f5b75"
+    },
+    {
+      "commit": "fa572009ae5f56baba7f6fcf8dd67ad8bb94eedc",
+      "blob": "cf2714a8095fbdffd51fbedea00f854eb2948e7f"
+    }
+  ],
+  "archive_policy": "Documentation-only curated records. Commit and blob hashes identify original source revisions, not checksums of edited archived documents. Earlier implementation source is excluded from this submission snapshot."
+}

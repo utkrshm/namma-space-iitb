@@ -1,0 +1,3 @@
+# Historical documents retain source formatting, including legacy whitespace.
+docs/experiments/branches/** -whitespace
+docs/experiments/state-history/** -whitespace
