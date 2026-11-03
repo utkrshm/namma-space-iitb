@@ -14,6 +14,94 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 04-11-26 03:08:22 IST — spacegen: leave out pixels that most other views see straight through (moving doors, wrong depth)
+
+- **Status:** adopted, off by default (`splat.transient_views = 0`) until its A/B test
+  (`outputs/spacegen/ab_queue4.sh`, vyas_room_v4 at 10k steps against ab_queue's `base`).
+- **Finding (CPU renders, `spacegen.splat.raster`):** the vyas_room v4 door haze is moving
+  content, not a missing surface. In 00030–00036 a hand pushes the door open, and in
+  00038–00044 the open leaf passes beside the lens. A door closer shuts it, and
+  00422–00430 film it closed; the model renders the closed door well, including the
+  held-out 00424. In the 30k model no Gaussian centre lies nearer than 1.5 units in the
+  door region of 00038–00041, where the depth target says 0.96–1.02 units. The region shows
+  the room behind (rendered 3.9–4.6 units) under a dark haze of Gaussians at 1.5–3 units
+  with median opacity 0.03. Gap seeds do put ~1,600 points on the open leaf. But 45
+  training views (00055–00086, 00422–00430) have those points in view at 1.0–1.9 units,
+  and in every one of them the depth target lies beyond the point: they look through
+  where the open door was. Training votes the leaf out, and hard-view sampling keeps
+  picking the door frames, whose error never falls, so the fight leaves the haze.
+- **Decision:** `spacegen.transients.find_transients` (in `build_splat`, after the metric
+  and plane depths, before the seeds), for every training image:
+  - takes points on a 4-pixel grid of its depth target (`splat.train.Priors`), away from
+    depth edges, and projects them into every other training image;
+  - a view *sees through* a point when its own target there is beyond 1.5 × the
+    point's depth;
+  - flags a pixel when at least `transient_views` (8) views see through its point, and
+    they are at least `transient_share` (80%) of the views that see it;
+  - opens the flags with a 3 × 3 kernel on the grid, so thin structures, which monocular
+    depth often misses in some views, are not flagged.
+
+  The output is `depth/transient/<stem>.npy` plus `transient.json` (parameters,
+  per-image shares). Training leaves flagged pixels out of the photometric loss (they show
+  the capture's own colour) and out of the depth loss. They no longer count towards a
+  view's hard-view error, and seed points from them are dropped. Held-out frames are
+  neither flagged nor used as evidence.
+- **Rationale and trade-offs:** this is a visibility (free-space) check, as in depth-map
+  fusion (Merrell et al. 2007; COLMAP's fusion), applied to the depth targets that
+  training already trusts. RobustNeRF-style residual masking would also catch the door.
+  But it masks whatever fits badly early on (windows, mirrors, fine texture) and needs a
+  warm-up, whereas this check needs no training.
+  - Prototype counts: on vyas_room it flags 17 of 389 views. Most flags are the open
+    door: 19–34% of 00038–00042 and 9% of 00044. There is also a 1–4% wall strip left of
+    the closed door in 00422–00430, which is a wrong monocular depth. Views 00057–00075
+    see 1.9× beyond it. Dropping that target is right; the strip's photometric loss is
+    lost in 6 frames. m-block: 19 of 224 views, at most 1.1% each, specks at frame
+    edges; the filmer's moving feet agree across neighbouring frames and are not
+    flagged. new_home: none of 1,048.
+  - Cost: 14 s (vyas_room) to 2.5 min (new_home) on the CPU, one pass.
+  - Not handled: moving content seen consistently by most views that see its place
+    (someone walking alongside the camera).
+- **Affected components:** new `spacegen.transients`; `splat.train` (`Priors` masks,
+  photometric and depth losses), `splat_stage` (stage call, seed filter), `SplatConfig`
+  (`transient_views`, `transient_share`, `transient_ratio`), tests, ARCHITECTURE.
+- **Completion criteria:** CPU tests: a synthetic room with a "door" in a few views is
+  flagged and a static room is not, and the photometric mask removes the gradient. The
+  vyas_room flags match the prototype. On the GPU, the A/B test: held-out PSNR no worse
+  (00040 itself shows the open door and stays low), and no dark haze in 00038–00044 or
+  in the walkthrough there. Then switch it on by default.
+
+## 04-11-26 02:49:57 IST — spacegen: a CPU rasterizer behind the same render call
+
+- **Status:** adopted.
+- **Decision:** `spacegen.splat.raster.rasterization` takes gsplat's `rasterization`
+  arguments as the pipeline uses them (one camera, unpacked, RGB or RGB+ED,
+  classic or antialiased) and calls gsplat for CUDA tensors. For CPU tensors it runs a
+  PyTorch rasterizer with the same rules. It uses gsplat's own PyTorch projection
+  (`gsplat.cuda._torch_impl`, pinned at 1.5.3): the same 2D filter, compensation and
+  3.33σ radii. It adds per-pixel front-to-back blending: pixel centres at +½, alpha ≤ 0.999,
+  pairs below 1/255 skipped, and a pixel stops before the Gaussian that would take its
+  transmittance to 1e-4 or below. Pairs are processed in depth-ordered chunks under a
+  memory budget. The render calls in `splat.model` and `splat.reflect` (and the SH
+  colours there) go through it, so tours, demos, support maps and audits run on a CPU
+  model, slowly.
+- **Rationale and trade-offs:** the GPU has been down since 03-11 ~18:50. Every
+  tour/demo change since (pacing, framing, look-around candidates) was checked only by
+  point projections, and the open problems (door haze, mirror layer, skipped
+  look-arounds) need renders to judge. A CPU render at 480 × 270 of a 1.5M-Gaussian room
+  takes tens of seconds, which is enough for contact sheets and threshold checks but
+  not for training. Training stays CUDA-only: no gradients through densification,
+  and it would take days. It also gives the CPU test suite render tests. The cost is a
+  second implementation to keep in step with gsplat's rules. A CUDA test compares the
+  two on a real model when the GPU returns.
+- **Affected components:** new `spacegen.splat.raster`; `splat.model.render`,
+  `splat.reflect` (rasterization, `sh_colours`); `scripts/cpu_preview.py` (frames of a
+  run's tour poses on the CPU).
+- **Completion criteria:** CPU tests: a single Gaussian's alpha profile and radius, depth
+  order of two overlapping Gaussians, the 1e-4 stop, and gradients through unit colours
+  (`support.blending_weight`). Low-resolution CPU frames of real runs checked by eye.
+  CUDA test (queued): mean absolute RGB difference from gsplat below 0.01 on a real
+  model.
+
 ## 04-11-26 01:12:46 IST — spacegen: look-arounds try several standing points before skipping an area
 
 - **Status:** adopted (selection CPU-tested; renders checked when the GPU is back).

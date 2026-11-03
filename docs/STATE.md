@@ -2,7 +2,7 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `04-11-26 01:16:00 IST`
+**Last updated:** `04-11-26 03:13:45 IST`
 
 ## Current Focus
 
@@ -27,7 +27,20 @@ Done since, CPU-tested only (GPU tests and re-renders not run), see [PLANS.md](P
   resumed run reuses; A/B runs scale `refine_stop` with their steps;
 - two options, off until their A/B tests run: a plane prior for walls, floors and
   ceilings (`splat.planar_prior`) and a per-image bilateral colour grid
-  (`splat.bilateral_grid`).
+  (`splat.bilateral_grid`);
+- a CPU rasterizer behind the same render call (`splat.raster`), so tours, demos and
+  audits can be rendered and checked without the GPU (`scripts/cpu_preview.py`). The
+  first CPU tour of vyas_room_v4 with the new tour code shows both look-arounds (both were
+  skipped before) and the whole room in the overview;
+- the vyas_room door haze is moving content: the door is open in 00030–00044 and shut
+  (door closer) in 00422–00430. In the 30k model the open leaf is gone and a dark haze
+  remains, because 45 frames see through where it was. A free-space check of the depth
+  targets (`spacegen.transients`, `splat.transient_views`, off until its A/B test,
+  `ab_queue4.sh`) leaves such pixels out of training. It flags 14 of 394 vyas_room
+  images (mostly the open door), almost nothing on m-block and nothing on new_home.
+
+Open, seen in CPU renders: the bright window in vyas_room's area 2 spreads a white haze
+into the room in the look-around.
 
 Work is on `feat/spacegen`: `spacegen/`, a standalone pipeline from any indoor video to
 a Gaussian splat with tour and demo videos (see `spacegen/docs/ARCHITECTURE.md`,
