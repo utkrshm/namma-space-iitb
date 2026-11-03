@@ -169,6 +169,9 @@ min_look_deg = 30.0
 look_candidates = 5
 walk_seconds_per_metre = 1.2
 max_turn_deg_per_s = 45.0
+capture_exposure = true
+exposure_radius = 0.15
+exposure_cone_deg = 10.0
 check_every = 10
 
 [demo]
@@ -183,6 +186,9 @@ clip_seconds = 4.5
 walk_speed = 0.4
 max_turn_deg_per_s = 45.0
 crossfade_seconds = 0.5
+capture_exposure = true
+exposure_radius = 0.15
+exposure_cone_deg = 10.0
 reel_fov_deg = 70.0
 turns = false
 turn_seconds = 12.0

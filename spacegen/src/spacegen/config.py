@@ -288,6 +288,13 @@ class TourConfig:
     walk_seconds_per_metre: float = 1.2
     # The walkthrough slows down where the capture turned on the spot (`tour.WalkPath`).
     max_turn_deg_per_s: float = 45.0
+    # Render with the capture's own exposure near each view (`spacegen.exposure`): the
+    # colour maps of training cameras within about exposure_radius camera heights and
+    # exposure_cone_deg of the view, blended. Off renders the video's average exposure,
+    # which blows out views towards bright windows.
+    capture_exposure: bool = True
+    exposure_radius: float = 0.15
+    exposure_cone_deg: float = 10.0
     # Quality checks (unrendered, unmeasured, near-floater shares) on every Nth frame.
     check_every: int = 10
 
@@ -306,6 +313,13 @@ class DemoConfig:
     walk_speed: float = 0.4
     max_turn_deg_per_s: float = 45.0
     crossfade_seconds: float = 0.5
+    # Render with the capture's own exposure near each view (`spacegen.exposure`): the
+    # colour maps of training cameras within about exposure_radius camera heights and
+    # exposure_cone_deg of the view, blended. Off renders the video's average exposure,
+    # which blows out views towards bright windows.
+    capture_exposure: bool = True
+    exposure_radius: float = 0.15
+    exposure_cone_deg: float = 10.0
     reel_fov_deg: float = 70.0
     # One 360° turn per area after the reel (filled models only). Off by default: a turn
     # faces walls the capture never saw, and generated content looks worst there.

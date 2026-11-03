@@ -4,6 +4,7 @@ from .audit import audit_model
 from .config import PipelineConfig
 from .contracts import Camera, look_at
 from .depth import align_metric_depth, near_inverse_depth
+from .exposure import CaptureExposure
 from .fill import fill_gaps
 from .ingest import ingest
 from .mvs import compute_mvs, gap_seeds
@@ -21,6 +22,7 @@ from .transients import find_transients
 __all__ = [
     "STAGES",
     "Camera",
+    "CaptureExposure",
     "GaussianModel",
     "PipelineConfig",
     "SceneFrame",

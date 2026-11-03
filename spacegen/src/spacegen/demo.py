@@ -8,7 +8,8 @@
 2. **Highlight reel:** eye-level clips along the smoothed capture path (`tour.WalkPath`:
    walking pace, slower where the capture turned on the spot). Candidate windows
    are scored on low-resolution renders by sharpness × measured share × rendered share,
-   and the best non-overlapping ones are joined with crossfades. With ``demo.turns`` a
+   and the best non-overlapping ones are joined with crossfades. Clips render with the
+   capture's own exposure near each view (`spacegen.exposure`). With ``demo.turns`` a
    filled model (`spacegen.fill`) adds one 360° turn per area.
 
 Output: ``<run>/demo/demo.mp4`` (H.264) and ``demo.json`` (chosen clips and their scores).
@@ -177,6 +178,14 @@ def render_demo(
     focal = (width / 2) / math.tan(math.radians(config.reel_fov_deg) / 2)
     k = np.array([[focal, 0, (width - 1) / 2], [0, focal, (height - 1) / 2], [0, 0, 1]])
     near = 0.12 * height_unit
+    exposure = None
+    if config.capture_exposure:
+        from .exposure import CaptureExposure, ExposureFilter
+
+        blend = CaptureExposure.from_run(
+            run, height_unit, device, config.exposure_radius, config.exposure_cone_deg, log
+        )
+        exposure = None if blend is None else ExposureFilter(blend, config.fps)
 
     clip_length = config.clip_seconds  # seconds of the walk per clip
     starts = np.arange(0, max(walk.duration - clip_length, 0) + 1e-6, clip_length / 2)
@@ -214,10 +223,14 @@ def render_demo(
     frames_per_clip = int(config.clip_seconds * config.fps)
     for number, start in enumerate(chosen):
         frames = []
+        if exposure is not None:
+            exposure.reset()
         for t in ease(np.linspace(0, 1, frames_per_clip)):
             camera = Camera("reel", width, height, k, pose(start + t * clip_length))
             with torch.no_grad():
                 rgb, _, _, _ = render_camera(model, camera, near_plane=near)
+            if exposure is not None:
+                rgb = exposure(camera.world_to_camera, rgb)
             image = cv2.resize(
                 (rgb.clamp(0, 1) * 255).round().byte().cpu().numpy(),
                 (config.width, config.height),
@@ -236,6 +249,8 @@ def render_demo(
         for stand in standing_points(frame, cameras):
             eye = frame.to_world(np.array(stand["eye_aligned"])[None])[0]
             frames = []
+            if exposure is not None:
+                exposure.reset()
             for yaw in 2 * math.pi * ease(np.linspace(0, 1, int(config.turn_seconds * config.fps))):
                 direction = np.array([math.cos(yaw), math.sin(yaw), math.sin(math.radians(-8))])
                 camera = Camera(
@@ -243,6 +258,8 @@ def render_demo(
                 )
                 with torch.no_grad():
                     rgb, _, _, _ = render_camera(model, camera, near_plane=near)
+                if exposure is not None:
+                    rgb = exposure(camera.world_to_camera, rgb)
                 image = cv2.resize(
                     (rgb.clamp(0, 1) * 255).round().byte().cpu().numpy(),
                     (config.width, config.height),

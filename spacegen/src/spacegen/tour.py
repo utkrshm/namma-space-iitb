@@ -13,9 +13,12 @@
    vyas-room tour.
 3. **Walkthrough:** eye level along the smoothed capture path, at walking pace.
 
-Frames are rendered at ``supersample`` × the output size and area-downsampled, so fine
-patterns (tiles, grilles) do not flicker. Output: ``<run>/tour/tour.mp4`` (H.264,
-yuv420p) and ``tour.json`` (sections, frame counts and the quality checks of `Renderer`).
+Look-arounds and the walkthrough render with the capture's own exposure near each view
+(`spacegen.exposure`). At the video's average exposure, views towards a bright window
+blow it out, along with the curtain beside it. Frames are rendered at ``supersample`` ×
+the output size and area-downsampled, so fine patterns (tiles, grilles) do not flicker.
+Output: ``<run>/tour/tour.mp4`` (H.264, yuv420p) and ``tour.json`` (sections, frame
+counts and the quality checks of `Renderer`).
 """
 
 from __future__ import annotations
@@ -101,8 +104,11 @@ class Renderer:
         near: float,
         camera_height: float,
         background=None,
+        exposure=None,
     ):
+        # ``exposure``: an `spacegen.exposure.ExposureFilter`, applied before clipping.
         self.model, self.config, self.near = model, config, near
+        self.exposure = exposure
         self.background = (
             None
             if background is None
@@ -117,6 +123,8 @@ class Renderer:
 
     def reset(self) -> None:
         self.checks = {key: [] for key in self.checks}
+        if self.exposure is not None:
+            self.exposure.reset()
 
     def summary(self) -> dict:
         return {key: float(np.mean(v)) if v else None for key, v in self.checks.items()}
@@ -140,6 +148,8 @@ class Renderer:
                         float((fraction[rendered] < 0.5).float().mean())
                     )
         self.frames += 1
+        if self.exposure is not None:
+            rgb = self.exposure(world_to_camera, rgb)
         image = (rgb.clamp(0, 1) * 255).round().byte().cpu().numpy()
         return cv2.resize(
             image, (self.config.width, self.config.height), interpolation=cv2.INTER_AREA
@@ -351,7 +361,17 @@ def render_tour(
     torch.cuda.empty_cache()
 
     # 2. Look-around in every area.
-    renderer = Renderer(model, config, 75.0, 0.15 * frame.camera_height, frame.camera_height)
+    exposure = None
+    if config.capture_exposure:
+        from .exposure import CaptureExposure, ExposureFilter
+
+        blend = CaptureExposure.from_run(
+            run, frame.camera_height, device, config.exposure_radius, config.exposure_cone_deg, log
+        )
+        exposure = None if blend is None else ExposureFilter(blend, fps)
+    renderer = Renderer(
+        model, config, 75.0, 0.15 * frame.camera_height, frame.camera_height, exposure=exposure
+    )
     train = [i for i, split in enumerate(splits) if split == "train"]
     for stand in filmed_standing_points(frame, cameras, train, config):
         renderer.reset()
