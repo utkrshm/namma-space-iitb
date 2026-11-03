@@ -2,9 +2,27 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `03-11-26 16:22:00 IST`
+**Last updated:** `04-11-26 01:05:00 IST`
 
 ## Current Focus
+
+**Blocker (since 03-11-26 ~18:50 IST): the GPU is down.** `nvidia-smi` cannot get a
+device handle and CUDA finds no device; it needs an admin (reset, driver reload or a
+full power-off; see `outputs/automation/GPU_DOWN.md`). Everything below that needs the
+GPU is queued to run on its own when it returns (`outputs/automation/IMPROVE_LOOP.md`).
+
+Done since, CPU-tested only (GPU tests and re-renders not run), see [PLANS.md](PLANS.md)
+03-11-26 23:25 to 04-11-26 00:52:
+- code-review fixes: area numbering across stages, a hang on videos over ~15 min,
+  mirrors no longer delete the room behind their wall, mid-run training resume, the
+  fill depth double division, reflector cache and frame counts;
+- occlusion-aware block merge (a candidate cause of the new_home border losses);
+  exact half-resolution reflection canvas; decoding with the frame's colour range;
+- walkthrough and highlight clips paced by turning as well as distance (at most 45°/s,
+  was up to 700°/s), tilt at most 35° down;
+- two options, off until their A/B tests run: a plane prior for walls, floors and
+  ceilings (`splat.planar_prior`) and a per-image bilateral colour grid
+  (`splat.bilateral_grid`).
 
 Work is on `feat/spacegen`: `spacegen/`, a standalone pipeline from any indoor video to
 a Gaussian splat with tour and demo videos (see `spacegen/docs/ARCHITECTURE.md`,

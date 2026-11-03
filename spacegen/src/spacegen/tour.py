@@ -166,6 +166,54 @@ def ease(t: np.ndarray) -> np.ndarray:
     return 0.5 - 0.5 * np.cos(np.pi * np.clip(t, 0, 1))
 
 
+class WalkPath:
+    """The smoothed capture path at walking pace, as a function of time in seconds.
+
+    Positions and view directions come from ``cameras`` in capture order, Gaussian-smoothed.
+    Each step between two cameras takes the longer of its walking time
+    (``seconds_per_height`` per camera height) and its turning time at
+    ``max_turn_deg_per_s``: spaced by distance alone, the view whipped round wherever the
+    capture turned on the spot (up to 700°/s on coorg and new_home). The view keeps the
+    phone's heading and 40% of its tilt, between 35° down and 15° up (much of the m-block
+    video looks straight down at the floor).
+    """
+
+    def __init__(self, cameras, frame: SceneFrame, seconds_per_height, max_turn_deg_per_s):
+        path = np.stack([c.centre for c in cameras])
+        forward = np.stack([c.camera_to_world[:3, 2] for c in cameras])
+        sigma = max(2.0, len(path) / 150)
+        path = gaussian_filter1d(path, sigma, axis=0, mode="nearest")
+        forward = gaussian_filter1d(forward, 2 * sigma, axis=0, mode="nearest")
+        up = frame.up
+
+        vertical = forward @ up
+        level = forward - vertical[:, None] * up
+        size = np.linalg.norm(level, axis=1)
+        pitch = np.clip(np.arctan2(0.4 * vertical, size), math.radians(-35), math.radians(15))
+        # Where the phone looked straight down its heading is noise: keep the last good one.
+        valid = size > 0.1 * np.linalg.norm(forward, axis=1)
+        if valid.any():
+            last = np.maximum.accumulate(np.where(valid, np.arange(len(path)), -1))
+            last = np.where(last < 0, np.flatnonzero(valid)[0], last)
+            heading = level[last] / size[last, None]
+        else:
+            heading = np.tile(frame.rotation[0], (len(path), 1))
+        views = np.cos(pitch)[:, None] * heading + np.sin(pitch)[:, None] * up
+
+        distance = np.linalg.norm(np.diff(path, axis=0), axis=1) / frame.camera_height
+        turn = np.degrees(np.arccos(np.clip((views[1:] * views[:-1]).sum(1), -1, 1)))
+        step = np.maximum(distance * seconds_per_height, turn / max_turn_deg_per_s)
+        self.times = np.r_[0, np.cumsum(step)]
+        self.duration = float(self.times[-1])
+        self.path, self.views, self.up = path, views, up
+
+    def pose(self, time: float) -> np.ndarray:
+        """World-to-camera matrix at ``time`` seconds (clamped to the path's ends)."""
+        position = np.array([np.interp(time, self.times, self.path[:, a]) for a in range(3)])
+        look = np.array([np.interp(time, self.times, self.views[:, a]) for a in range(3)])
+        return look_at(position, position + look / np.linalg.norm(look), self.up)
+
+
 def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
     run = Path(run)
     output = run / "tour"
@@ -260,24 +308,15 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
 
     # 3. Walkthrough along the smoothed capture path (training cameras, capture order).
     renderer.reset()
-    path = np.stack([cameras[i].centre for i in train])
-    forward = np.stack([cameras[i].camera_to_world[:3, 2] for i in train])
-    sigma = max(2.0, len(path) / 150)
-    path = gaussian_filter1d(path, sigma, axis=0, mode="nearest")
-    forward = gaussian_filter1d(forward, sigma * 2, axis=0, mode="nearest")
-    lengths = (
-        np.r_[0, np.cumsum(np.linalg.norm(np.diff(path, axis=0), axis=1))] / frame.camera_height
+    walk = WalkPath(
+        [cameras[i] for i in train],
+        frame,
+        config.walk_seconds_per_metre * 1.5,
+        config.max_turn_deg_per_s,
     )
-    total = float(lengths[-1])
-    frames = int(max(10.0, total * config.walk_seconds_per_metre * 1.5) * fps)
-    stations = np.linspace(0, total, frames)
-    for station in stations:
-        position = np.array([np.interp(station, lengths, path[:, a]) for a in range(3)])
-        look = np.array([np.interp(station, lengths, forward[:, a]) for a in range(3)])
-        look -= 0.6 * (look @ up) * up  # less of the phone's downward tilt
-        look /= np.linalg.norm(look)
-        world_to_camera = look_at(position, position + look, up)
-        writer.write(label(renderer(world_to_camera), "Walkthrough"))
+    frames = int(max(10.0, walk.duration) * fps)
+    for time in np.linspace(0, walk.duration, frames):
+        writer.write(label(renderer(walk.pose(time)), "Walkthrough"))
     sections.append(
         {
             "name": "walkthrough",

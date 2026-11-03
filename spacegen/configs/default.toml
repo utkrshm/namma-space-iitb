@@ -163,6 +163,7 @@ max_unmeasured = 0.05
 max_unrendered = 0.01
 min_look_deg = 30.0
 walk_seconds_per_metre = 1.2
+max_turn_deg_per_s = 45.0
 check_every = 10
 
 [demo]
@@ -175,6 +176,7 @@ build_seconds = 24.0
 clips = 8
 clip_seconds = 4.5
 walk_speed = 0.4
+max_turn_deg_per_s = 45.0
 crossfade_seconds = 0.5
 reel_fov_deg = 70.0
 turns = false

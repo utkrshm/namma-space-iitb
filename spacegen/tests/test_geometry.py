@@ -19,7 +19,7 @@ from spacegen.scene_frame import SceneFrame, estimate_frame, find_areas, run_fra
 from spacegen.sfm import Solution
 from spacegen.splat.train import needle_penalty, photometric_l1
 from spacegen.support import fibonacci_directions
-from spacegen.tour import filmed_arc
+from spacegen.tour import WalkPath, filmed_arc
 
 
 def test_look_at_points_the_camera_at_the_target():
@@ -281,6 +281,37 @@ def test_filmed_arc_follows_the_cameras_near_the_standing_point():
     assert 5 <= low <= 25 and 95 <= high <= 115
     assert arc["pitch_deg"] == pytest.approx(-25, abs=0.5)
     assert arc["cameras"] == 30
+
+
+def test_walk_path_turns_slowly_on_the_spot_and_does_not_stare_at_the_floor():
+    frame = SceneFrame(np.eye(3), np.zeros(3), 1.0, True, [])
+    k = np.array([[300.0, 0, 159.5], [0, 300.0, 119.5], [0, 0, 1]])
+
+    def camera(x, yaw_deg, pitch_deg):
+        yaw, pitch = math.radians(yaw_deg), math.radians(pitch_deg)
+        position = np.array([x, 0.0, 1.0])
+        direction = np.r_[
+            math.cos(pitch) * math.cos(yaw), math.cos(pitch) * math.sin(yaw), math.sin(pitch)
+        ]
+        return Camera("c", 320, 240, k, look_at(position, position + direction))
+
+    # Walk 2 camera heights along +x, turn 180° on the spot, walk back looking straight down.
+    cameras = [camera(x, 0, -20) for x in np.linspace(0, 2, 40)]
+    cameras += [camera(2, yaw, -20) for yaw in np.linspace(0, 180, 20)]
+    cameras += [camera(x, 180, -90) for x in np.linspace(2, 0, 40)]
+    walk = WalkPath(cameras, frame, 1.8, 45.0)
+
+    times = np.linspace(0, walk.duration, int(walk.duration * 30))
+    views = np.stack([np.linalg.inv(walk.pose(t))[:3, 2] for t in times])
+    rate = np.degrees(np.arccos(np.clip((views[1:] * views[:-1]).sum(1), -1, 1))) * 30
+    pitch = np.degrees(np.arcsin(views[:, 2]))
+    assert rate.max() <= 46
+    assert walk.duration > 2 * 2 * 1.8 * 0.9 + 180 / 45 * 0.9
+    assert pitch.min() >= -35.1  # interpolating between headings dips a little
+    assert pitch[0] == pytest.approx(math.degrees(math.atan(0.4 * math.tan(math.radians(-20)))))
+    # Looking straight down, the view keeps the last real heading (back along −x).
+    assert views[-1, 0] / np.linalg.norm(views[-1, :2]) < -0.95
+    assert np.allclose(np.linalg.inv(walk.pose(walk.duration))[:3, 3], [0, 0, 1], atol=0.05)
 
 
 def test_in_between_view_is_halfway_in_position_and_turn():

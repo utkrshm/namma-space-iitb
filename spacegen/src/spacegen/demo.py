@@ -5,7 +5,8 @@
    camera pose by camera pose. Generated (filled) Gaussians are left out: seen from
    above they add haze, and this view is meant to show what was captured. The walked
    path is drawn as it grows, and the current camera is drawn as a small frustum.
-2. **Highlight reel:** eye-level clips along the smoothed capture path. Candidate windows
+2. **Highlight reel:** eye-level clips along the smoothed capture path (`tour.WalkPath`:
+   walking pace, slower where the capture turned on the spot). Candidate windows
    are scored on low-resolution renders by sharpness × measured share × rendered share,
    and the best non-overlapping ones are joined with crossfades. With ``demo.turns`` a
    filled model (`spacegen.fill`) adds one 360° turn per area.
@@ -21,14 +22,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 import torch
-from scipy.ndimage import gaussian_filter1d
 
 from .config import DemoConfig
 from .contracts import Camera, look_at
 from .scene_frame import run_frame
 from .splat.model import load_ply, render_camera, write_json
 from .splat.train import load_cameras
-from .tour import Writer, cutaway, ease, label, measured_support
+from .tour import WalkPath, Writer, cutaway, ease, label, measured_support
 
 
 def first_seen(means: torch.Tensor, cameras: list[Camera], max_depth: float) -> torch.Tensor:
@@ -159,25 +159,14 @@ def render_demo(run: Path, config: DemoConfig, device: str, log) -> dict:
     torch.cuda.empty_cache()
 
     # 2. Highlight reel along the smoothed capture path.
-    path = np.stack([c.centre for c in train])
-    forward = np.stack([c.camera_to_world[:3, 2] for c in train])
-    sigma = max(2.0, len(path) / 150)
-    path = gaussian_filter1d(path, sigma, axis=0, mode="nearest")
-    forward = gaussian_filter1d(forward, 2 * sigma, axis=0, mode="nearest")
-    lengths = np.r_[0, np.cumsum(np.linalg.norm(np.diff(path, axis=0), axis=1))] / height_unit
+    walk = WalkPath(train, frame, 1 / config.walk_speed, config.max_turn_deg_per_s)
+    pose = walk.pose
     focal = (width / 2) / math.tan(math.radians(config.reel_fov_deg) / 2)
     k = np.array([[focal, 0, (width - 1) / 2], [0, focal, (height - 1) / 2], [0, 0, 1]])
     near = 0.12 * height_unit
 
-    def pose(station: float) -> np.ndarray:
-        position = np.array([np.interp(station, lengths, path[:, a]) for a in range(3)])
-        look = np.array([np.interp(station, lengths, forward[:, a]) for a in range(3)])
-        look -= 0.6 * (look @ up) * up
-        look /= np.linalg.norm(look)
-        return look_at(position, position + look, up)
-
-    clip_length = config.clip_seconds * config.walk_speed  # camera heights per clip
-    starts = np.arange(0, max(lengths[-1] - clip_length, 0) + 1e-6, clip_length / 2)
+    clip_length = config.clip_seconds  # seconds of the walk per clip
+    starts = np.arange(0, max(walk.duration - clip_length, 0) + 1e-6, clip_length / 2)
     scores = []
     for start in starts:
         values = []
@@ -255,9 +244,7 @@ def render_demo(run: Path, config: DemoConfig, device: str, log) -> dict:
         {
             "video": str(output / "demo.mp4"),
             "seconds": writer.frames / config.fps,
-            "clips": [
-                {"start_camera_heights": s, "score": scores[list(starts).index(s)]} for s in chosen
-            ],
+            "clips": [{"start_seconds": s, "score": scores[list(starts).index(s)]} for s in chosen],
             "turns": turns,
         }
     )

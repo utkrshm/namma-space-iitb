@@ -14,6 +14,29 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 04-11-26 00:52:00 IST — spacegen: walkthrough and highlight paths paced by turning, not only distance
+
+- **Status:** adopted (CPU-tested; videos to be re-rendered when the GPU is back).
+- **Decision:** the tour walkthrough and the demo highlight reel follow one `WalkPath`
+  (`spacegen.tour`): the smoothed capture path as a function of time, where each step
+  takes the longer of its walking time and its turning time at `max_turn_deg_per_s`
+  (45°/s). The view keeps the phone's heading and 40% of its tilt (as before), now
+  clamped to 35° down and 15° up.
+- **Rationale and trade-offs:** stations were spaced by distance alone, so wherever the
+  capture turned on the spot the view whipped round in a frame or two. Measured on the
+  real camera paths: 4–15% of walkthrough frames turned faster than 90°/s, up to 700°/s
+  (coorg, new_home), which reads as a glitch and shows unrendered edges mid-pan. And the
+  m-block video looks steeply down for long stretches (16% of cameras below −60°), so
+  8% of its walkthrough stared at the floor below −45°. Cost: walkthroughs get 4–18 s
+  longer (vyas_room 25→29 s, coorg 34→42 s, new_home 78→96 s).
+- **Affected components:** `spacegen.tour` (`WalkPath`, walkthrough), `spacegen.demo`
+  (highlight windows are now in seconds of the path, `demo.json` clips carry
+  `start_seconds`), `TourConfig`/`DemoConfig.max_turn_deg_per_s`.
+- **Implementation steps:** `WalkPath` class; tour and demo use it; config field; CPU
+  test with a capture that turns 180° on the spot and one that looks straight down.
+- **Completion criteria:** test passes; turn rate ≤ 45°/s and pitch ≥ −35° on the real
+  m-block, vyas_room, coorg and new_home camera paths.
+
 ## 03-11-26 23:36:05 IST — spacegen: occlusion-aware block merge, reflection alignment, bilateral grid
 
 - **Status:** occlusion-aware merge and reflection alignment adopted (CPU-tested; GPU

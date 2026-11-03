@@ -273,6 +273,8 @@ class TourConfig:
     max_unrendered: float = 0.01
     min_look_deg: float = 30.0
     walk_seconds_per_metre: float = 1.2
+    # The walkthrough slows down where the capture turned on the spot (`tour.WalkPath`).
+    max_turn_deg_per_s: float = 45.0
     # Quality checks (unrendered, unmeasured, near-floater shares) on every Nth frame.
     check_every: int = 10
 
@@ -289,6 +291,7 @@ class DemoConfig:
     clip_seconds: float = 4.5
     # Camera heights travelled per second in highlight clips (about 0.6 m/s).
     walk_speed: float = 0.4
+    max_turn_deg_per_s: float = 45.0
     crossfade_seconds: float = 0.5
     reel_fov_deg: float = 70.0
     # One 360° turn per area after the reel (filled models only). Off by default: a turn
