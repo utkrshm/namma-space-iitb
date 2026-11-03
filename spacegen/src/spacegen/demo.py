@@ -28,7 +28,18 @@ from .contracts import Camera, look_at
 from .scene_frame import run_frame
 from .splat.model import load_ply, render_camera, write_json
 from .splat.train import load_cameras
-from .tour import WalkPath, Writer, cutaway, ease, label, measured_support, scene_model
+from .tour import (
+    WalkPath,
+    Writer,
+    cutaway,
+    ease,
+    framing_distance,
+    label,
+    measured_support,
+    orbit_eye,
+    overview_points,
+    scene_model,
+)
 
 
 def first_seen(means: torch.Tensor, cameras: list[Camera], max_depth: float) -> torch.Tensor:
@@ -121,17 +132,16 @@ def render_demo(run: Path, config: DemoConfig, device: str, log) -> dict:
         overview = model.subset(~model.extras["filled"].reshape(-1).bool())
     overview = cutaway(overview, frame, centres_aligned)
     seen = first_seen(overview.params["means"].detach(), train, 3.0 * height_unit)
-    low = np.percentile(centres_aligned[:, :2], 1, axis=0) - 0.6
-    high = np.percentile(centres_aligned[:, :2], 99, axis=0) + 0.6
-    middle = np.r_[(low + high) / 2, 0.2]
     fov = 45.0
     focal = (width / 2) / math.tan(math.radians(fov) / 2)
     k = np.array([[focal, 0, (width - 1) / 2], [0, focal, (height - 1) / 2], [0, 0, 1]])
-    # Fit the footprint, then tilt 20° off vertical so walls read as walls.
-    span = max((high - low)[0] / width * height, (high - low)[1]) * 0.5
-    distance = 1.08 * span / math.tan(math.atan(math.tan(math.radians(fov) / 2) * height / width))
-    tilt = math.radians(70)
-    eye = middle + distance * np.array([0.0, -math.cos(tilt), math.sin(tilt)])
+    # Fit what the cutaway keeps, seen 20° off vertical so walls read as walls.
+    points = overview_points(overview, frame)
+    low, high = np.percentile(points[:, :2], 2, axis=0), np.percentile(points[:, :2], 98, axis=0)
+    middle = np.r_[(low + high) / 2, 0.2]
+    elevation, angle = math.radians(70), -math.pi / 2
+    distance = framing_distance(points, middle, elevation, [angle], k, width, height)
+    eye = orbit_eye(middle, distance, elevation, angle)
     view = Camera(
         "top",
         width,

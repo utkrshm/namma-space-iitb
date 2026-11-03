@@ -2,7 +2,8 @@
 
 1. **Overview:** a slow orbit from above with the ceiling cut away (a "dollhouse"
    view). It drops Gaussians above 1.15 camera heights, below the floor, and far outside
-   the camera path, which are never seen from above.
+   the camera path, which are never seen from above, and is framed on what it keeps
+   (`framing_distance`).
 2. **Look-around:** at each area's standing point, a turn through the directions the
    capture filmed from near there, at the phone's own tilt (`filmed_arc`). Every 5° view
    is checked before rendering (`_checked_arc`); only the longest passing part is played,
@@ -163,6 +164,65 @@ def cutaway(model: GaussianModel, frame: SceneFrame, centres_aligned: np.ndarray
     return model.subset(torch.from_numpy(keep).to(model.device))
 
 
+def overview_points(model: GaussianModel, frame: SceneFrame, count: int = 20_000) -> np.ndarray:
+    """Up to ``count`` aligned centres of the model's opaque Gaussians (opacity > 0.3, or
+    all when there are few): what an overview has to show."""
+    means = model.params["means"].detach().cpu().numpy()
+    solid = model.params["opacities"].detach().sigmoid().cpu().numpy() > 0.3
+    points = frame.to_aligned(means[solid] if solid.sum() >= 100 else means)
+    rng = np.random.default_rng(0)
+    return points[rng.choice(len(points), min(count, len(points)), replace=False)]
+
+
+def orbit_eye(middle: np.ndarray, distance: float, elevation: float, angle: float) -> np.ndarray:
+    """Aligned eye ``distance`` from ``middle`` at ``elevation`` above the floor plane."""
+    return middle + distance * np.array(
+        [
+            math.cos(elevation) * math.cos(angle),
+            math.cos(elevation) * math.sin(angle),
+            math.sin(elevation),
+        ]
+    )
+
+
+def framing_distance(
+    points: np.ndarray,
+    middle: np.ndarray,
+    elevation: float,
+    angles,
+    k: np.ndarray,
+    width: int,
+    height: int,
+    margin: float = 0.94,
+    share: float = 98.0,
+) -> float:
+    """Smallest distance (camera heights) at which ``share``% of the aligned ``points``
+    project inside ``margin`` of a ``width`` × ``height`` view looking at ``middle`` from
+    every orbit angle in ``angles``."""
+    centre = np.array([(width - 1) / 2, (height - 1) / 2])
+    limit = margin * np.array([width / 2, height / 2])
+
+    def fits(distance: float) -> bool:
+        for angle in angles:
+            eye = orbit_eye(middle, distance, elevation, angle)
+            world_to_camera = look_at(eye, middle, (0.0, 0.0, 1.0))
+            local = points @ world_to_camera[:3, :3].T + world_to_camera[:3, 3]
+            if np.percentile(local[:, 2], 100 - share) <= 0.05:
+                return False
+            pixels = local[:, :2] / np.maximum(local[:, 2:3], 1e-6) * np.diag(k)[:2] + k[:2, 2]
+            if (np.percentile(np.abs(pixels - centre), share, axis=0) > limit).any():
+                return False
+        return True
+
+    low, high = 0.1, 1000.0
+    if not len(points) or not fits(high):
+        return high
+    for _ in range(40):
+        middle_distance = (low + high) / 2
+        low, high = (low, middle_distance) if fits(middle_distance) else (middle_distance, high)
+    return high
+
+
 def ease(t: np.ndarray) -> np.ndarray:
     return 0.5 - 0.5 * np.cos(np.pi * np.clip(t, 0, 1))
 
@@ -250,32 +310,33 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
     overview = cutaway(model, frame, centres)
     fov = 50.0
     renderer = Renderer(overview, config, fov, 0.01, frame.camera_height, (0.13, 0.13, 0.15))
-    # Frame the walked area plus a margin (Gaussian percentiles include outer floaters).
-    low = np.percentile(centres[:, :2], 2, axis=0) - 0.5
-    high = np.percentile(centres[:, :2], 98, axis=0) + 0.5
-    middle = np.array([(low[0] + high[0]) / 2, (low[1] + high[1]) / 2, 0.3])
-    # Far enough that the footprint's longer side fills most of the (vertical) view.
-    half = 0.5 * float(np.max(high - low))
-    vertical = math.atan(math.tan(math.radians(fov) / 2) * config.height / config.width)
-    distance = 1.05 * half / math.tan(vertical)
+    # Frame what the cutaway keeps (walls up to 1.6 camera heights beyond the path), at one
+    # distance for the whole orbit: framed on the path, the orbit camera sat just above the
+    # far walls of a room filmed from its middle (m-block).
+    points = overview_points(overview, frame)
+    low, high = np.percentile(points[:, :2], 2, axis=0), np.percentile(points[:, :2], 98, axis=0)
+    middle = np.r_[(low + high) / 2, 0.3]
     elevation = math.radians(55)
+    distance = framing_distance(
+        points,
+        middle,
+        elevation,
+        np.linspace(0, 2 * math.pi, 24, endpoint=False),
+        _intrinsics(config.width, config.height, fov),
+        config.width,
+        config.height,
+    )
     count = int(config.look_seconds * 1.4 * fps)
     for number in range(count):
         angle = 2 * math.pi * number / count
-        offset = distance * np.array(
-            [
-                math.cos(elevation) * math.cos(angle),
-                math.cos(elevation) * math.sin(angle),
-                math.sin(elevation),
-            ]
-        )
-        eye = middle + offset
+        eye = orbit_eye(middle, distance, elevation, angle)
         world_to_camera = look_at(frame.to_world(eye[None])[0], frame.to_world(middle[None])[0], up)
         writer.write(label(renderer(world_to_camera), "Overview"))
     sections.append(
         {
             "name": "overview",
             "frames": count,
+            "distance_camera_heights": distance,
             "checks": renderer.summary(),
         }
     )

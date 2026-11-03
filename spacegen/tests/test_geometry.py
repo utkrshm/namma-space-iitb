@@ -19,7 +19,7 @@ from spacegen.scene_frame import SceneFrame, estimate_frame, find_areas, run_fra
 from spacegen.sfm import Solution
 from spacegen.splat.train import needle_penalty, photometric_l1
 from spacegen.support import fibonacci_directions
-from spacegen.tour import WalkPath, filmed_arc, scene_model
+from spacegen.tour import WalkPath, filmed_arc, framing_distance, orbit_eye, scene_model
 
 
 def test_look_at_points_the_camera_at_the_target():
@@ -312,6 +312,35 @@ def test_cached_outputs_follow_the_splat_they_were_made_from(tmp_path):
     assert made_from({}, legacy, splat)
     os.utime(legacy, ns=(1, 10**18 - 1))
     assert not made_from({}, legacy, splat)
+
+
+def test_overview_framing_fits_the_whole_room_from_every_angle():
+    # A 6 × 2 room (camera heights): floor points and walls up to 1.15.
+    rng = np.random.default_rng(0)
+    floor = np.c_[rng.uniform(-3, 3, 4000), rng.uniform(-1, 1, 4000), np.zeros(4000)]
+    wall = np.c_[rng.uniform(-3, 3, 2000), np.full(2000, 1.0), rng.uniform(0, 1.15, 2000)]
+    points = np.vstack((floor, wall, wall * [1, -1, 1]))
+    middle, elevation = np.array([0.0, 0.0, 0.3]), math.radians(55)
+    angles = np.linspace(0, 2 * math.pi, 24, endpoint=False)
+    width, height = 320, 180
+    focal = (width / 2) / math.tan(math.radians(25))
+    k = np.array([[focal, 0, (width - 1) / 2], [0, focal, (height - 1) / 2], [0, 0, 1]])
+    distance = framing_distance(points, middle, elevation, angles, k, width, height)
+
+    def outside(scale):
+        worst = 0.0
+        for angle in angles:
+            w2c = look_at(orbit_eye(middle, scale * distance, elevation, angle), middle)
+            local = points @ w2c[:3, :3].T + w2c[:3, 3]
+            pixels = local[:, :2] / local[:, 2:3] * focal + k[:2, 2]
+            inside = (np.abs(pixels - k[:2, 2]) <= 0.94 * np.array([width, height]) / 2).all(1)
+            worst = max(worst, 1 - inside.mean())
+        return worst
+
+    assert outside(1.0) <= 0.02 + 1e-3
+    assert outside(0.9) > 0.02
+    # The long side sets the distance: seen end-on it must still fit the frame's height.
+    assert distance > 3
 
 
 def test_walk_path_turns_slowly_on_the_spot_and_does_not_stare_at_the_floor():

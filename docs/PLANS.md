@@ -14,6 +14,25 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 04-11-26 01:02:32 IST — spacegen: frame the overview on the kept geometry, not the camera path
+
+- **Status:** adopted (checked on CPU point projections of three runs; tour and demo
+  re-render when the GPU is back).
+- **Decision:** the tour's overview orbit and the demo's build-up view are framed on the
+  Gaussians the cutaway keeps (opaque ones, opacity > 0.3): centred on the middle of
+  their 2nd–98th percentile box, at the smallest distance at which 98% of them project
+  inside 94% of the frame from every orbit angle (`tour.framing_distance`, bisection).
+- **Rationale and trade-offs:** the framing used the camera path plus a fixed margin,
+  but the cutaway keeps walls up to 1.6 camera heights from the path. Where the phone
+  stayed in the middle of a room (m-block), the orbit camera sat just above the far walls,
+  which filled the frame as blurry foreground; on vyas_room the room ran off the bottom
+  edge at some angles (seen in the 01 Nov tour). One distance for the whole orbit
+  avoids zoom breathing; the cost is spare margin when the long side faces the camera.
+- **Affected components:** `spacegen.tour` (`framing_distance`, overview), `spacegen.demo`
+  (build-up view).
+- **Completion criteria:** CPU test (a long synthetic room fits at every angle and does
+  not at 90% of the distance); m-block and vyas_room projections show the whole room.
+
 ## 04-11-26 00:53:13 IST — spacegen: cached audit and fill outputs remember which splat they came from
 
 - **Status:** adopted (CPU-tested).
