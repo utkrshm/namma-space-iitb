@@ -8,9 +8,10 @@ from .fill import fill_gaps
 from .ingest import ingest
 from .mvs import compute_mvs, gap_seeds
 from .pipeline import STAGES, run
+from .planar import planar_priors
 from .reflectors import find_reflectors
 from .reslice import reslice, run_solution
-from .scene_frame import SceneFrame, estimate_frame
+from .scene_frame import SceneFrame, estimate_frame, run_frame
 from .sfm import Solution, load_solution, solve_cameras
 from .splat import GaussianModel, load_ply, render, save_ply, train_splat
 from .support import compute_support, support_map
@@ -36,10 +37,12 @@ __all__ = [
     "load_solution",
     "look_at",
     "near_inverse_depth",
+    "planar_priors",
     "render",
     "render_tour",
     "reslice",
     "run",
+    "run_frame",
     "run_solution",
     "save_ply",
     "solve_cameras",

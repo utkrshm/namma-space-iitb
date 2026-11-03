@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .config import PipelineConfig
+from .config import PipelineConfig, parse_overrides
 from .pipeline import STAGES, run
 
 
@@ -38,15 +38,7 @@ def main(argv=None) -> int:
 
     args = parser.parse_args(argv)
     config = PipelineConfig.from_toml(args.config)
-    overrides: dict[str, dict] = {}
-    for item in args.set:
-        key, value = item.split("=", 1)
-        section, name = key.split(".", 1)
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            parsed = value
-        overrides.setdefault(section, {})[name] = parsed
+    overrides = parse_overrides(args.set)
     if overrides:
         config = config.replace(**overrides)
 

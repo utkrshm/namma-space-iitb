@@ -14,6 +14,28 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 03-11-26 23:55:00 IST — spacegen: plane prior for walls, floors and ceilings (experiment)
+
+- **Status:** implemented behind `splat.planar_prior` (off); A/B queued
+  (`outputs/spacegen/ab_queue.sh`, after the GPU tests and the m block retrain).
+- **Decision:** per training frame, segment `wall`, `floor` and `ceiling` (Mask2Former,
+  ADE20K, the segmenter already used for windows and mirrors), fit up to two planes per
+  large region to the frame's depth target (RANSAC in camera space, inliers within 1.5% of
+  their distance), and use the plane depth there as trusted depth: full depth weight and
+  a normal target on every plane pixel (`spacegen.planar`, `depth/planar/<stem>.npz`). A
+  region whose planes do not explain 60% of its depth keeps its depth.
+- **Rationale and trade-offs:** blank walls still carry floaters that smear off the
+  filmed path (m block, Coorg), and monocular depth bends on them. PlanarGS, AtlasGS and
+  3D Gaussian Flats report that plane constraints fix low-texture indoor geometry where
+  flattened Gaussians alone do not. Risks: a wrong segmentation flattening furniture
+  (guarded by the inlier share), and plane pixels outvoting texture on posters (wanted).
+- **Affected components:** new `spacegen/planar.py`; `splat/train.py` (`Priors` returns
+  a 4th element `planar`, `prior_losses`, `drop_mirror_depths`); `splat_stage.py`;
+  `config.py`; new `scripts/experiment.py` (10k-step A/B runs and per-frame comparison).
+- **Completion criteria:** on vyas_room_v4 and room_m_block_v4 at 10k steps, held-out
+  PSNR within 0.1 dB of the default or better, fewer frames losing > 1 dB, and visibly
+  flatter walls off the path; only then switch it on by default.
+
 ## 03-11-26 23:25:00 IST — spacegen: fixes from the code review of `spacegen/src`
 
 - **Status:** adopted; CPU tests pass. GPU tests are written but not run: the GPU has been

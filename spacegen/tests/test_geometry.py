@@ -413,3 +413,53 @@ def test_reflector_frame_count_counts_distinct_frames():
     assert len(merged) == 1 and merged[0]["frames"] == 1
     three_frames = [region(stem, 0.0) for stem in ("00010", "00011", "00012")]
     assert _merge(three_frames, np.array([0, 0, 1.0]), 1.0)[0]["frames"] == 3
+
+
+def test_planar_fit_separates_the_two_walls_of_a_corner_and_gives_their_depth():
+    """A camera facing a room corner: two walls meeting at 90°, depth with 1% noise. Two
+    planes must come out, each holding its own wall, and the plane depth along each ray
+    must match the true depth."""
+    from spacegen.planar import fit_planes, plane_inverse_depth
+
+    rng = np.random.default_rng(0)
+    # Camera at the origin looking along +z; walls x + z = 4 (left) and −x + z = 4 (right).
+    xs, ys = np.meshgrid(np.linspace(-0.8, 0.8, 80), np.linspace(-0.6, 0.6, 60))
+    rays = np.stack((xs, ys, np.ones_like(xs)), -1)
+    left = xs < 0
+    z = np.where(left, 4 / (1 - xs), 4 / (1 + xs))
+    noisy = z * (1 + rng.normal(0, 0.01, z.shape) * 0.3)
+    points = rays.reshape(-1, 3) * noisy.reshape(-1, 1)
+    planes = fit_planes(points, 0.015, rng)
+    assert len(planes) == 2
+    owners = [left.ravel()[inliers].mean() for _, _, inliers in planes]
+    assert sorted(round(o) for o in owners) == [0, 1]
+    assert sum(int(p[2].sum()) for p in planes) > 0.9 * len(points)
+    for normal, offset, inliers in planes:
+        inverse = plane_inverse_depth(rays.reshape(-1, 3)[inliers], normal, offset)
+        # Inliers lie within 1.5% of their distance from the plane; along a ray at 45°
+        # to the wall that is up to about 2% of depth (points next to the corner).
+        assert np.allclose(1 / inverse, z.ravel()[inliers], rtol=0.025)
+        assert np.median(np.abs(1 / inverse / z.ravel()[inliers] - 1)) < 0.005
+
+
+def test_priors_use_planes_only_when_switched_on(tmp_path):
+    from spacegen.splat.train import Priors
+
+    mono = np.full((6, 8), 0.5, np.float16)
+    np.save(tmp_path / "a.npy", mono)
+    (tmp_path / "alignment.json").write_text(json.dumps({"a": {"a": 1.0, "b": 0.0}}))
+    (tmp_path / "planar").mkdir()
+    planar = np.zeros((6, 8), bool)
+    planar[:, :4] = True
+    np.savez(
+        tmp_path / "planar" / "a.npz", inverse=np.full((6, 8), 0.25, np.float16), planar=planar
+    )
+    image = tmp_path / "a.jpg"
+
+    _, metric, measured, mask = Priors(tmp_path, [image]).get(0, "cpu")
+    assert mask is None and measured is None and torch.allclose(metric, torch.tensor(0.5))
+    _, metric, _, mask = Priors(tmp_path, [image], planar=True).get(0, "cpu")
+    assert mask[:, :4].all() and not mask[:, 4:].any()
+    assert torch.allclose(metric[:, :4], torch.tensor(0.25)) and torch.allclose(
+        metric[:, 4:], torch.tensor(0.5)
+    )

@@ -7,6 +7,7 @@ falls back to a default.
 
 from __future__ import annotations
 
+import json
 import tomllib
 import types
 import typing
@@ -160,6 +161,10 @@ class SplatConfig:
     # Decays with the depth prior.
     normal_prior_weight: float = 0.1
     textureless_gradient: float = 0.05
+    # Planes fitted to the depth of walls, floors and ceilings (`spacegen.planar`) replace
+    # the bending monocular depth there, at full weight and with a normal target on every
+    # plane pixel. Off until it beats the default on held-out views.
+    planar_prior: bool = False
     # Pixels at or above this level in a channel are clipped by the sensor (blown-out
     # windows); there the render is only penalized for being darker. Above 1 disables.
     saturation_level: float = 0.98
@@ -341,3 +346,18 @@ def _build(section_type, values: dict):
             pass
         converted[key] = value
     return section_type(**converted)
+
+
+def parse_overrides(items: list[str]) -> dict[str, dict]:
+    """``["splat.steps=7000", ...]`` → ``{"splat": {"steps": 7000}}`` (values parsed as
+    JSON, else kept as text), for `PipelineConfig.replace`."""
+    overrides: dict[str, dict] = {}
+    for item in items:
+        key, value = item.split("=", 1)
+        section, name = key.split(".", 1)
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = value
+        overrides.setdefault(section, {})[name] = parsed
+    return overrides

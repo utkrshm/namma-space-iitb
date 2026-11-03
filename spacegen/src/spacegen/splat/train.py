@@ -154,20 +154,25 @@ class Images:
 class Priors:
     """Depth priors per image, loaded lazily.
 
-    ``get`` returns ``(mono, metric, measured)``:
+    ``get`` returns ``(mono, metric, measured, planar)``:
     - ``mono``: the relative monocular inverse depth;
     - ``metric``: inverse depth in SfM units, or None. It is the fitted monocular depth
       (``a · mono + b`` from ``alignment.json``; nearer than the image's SfM points, the
       scaled metric depth, `spacegen.depth.near_inverse_depth`), replaced by the multi-view
-      stereo depth (``mvs/<stem>.npy``) wherever that exists. Without a fit, only MVS
-      pixels have a value and the rest are 0;
-    - ``measured``: a bool mask of the MVS pixels, or None.
+      stereo depth (``mvs/<stem>.npy``) wherever that exists, then by the wall, floor and
+      ceiling planes (``planar/<stem>.npz``, `spacegen.planar`) where those exist. Without
+      a fit, only MVS pixels have a value and the rest are 0;
+    - ``measured``: a bool mask of the MVS pixels, or None;
+    - ``planar``: a bool mask of the plane pixels, or None.
     """
 
-    def __init__(self, folder: Path, paths: list[Path]):
+    def __init__(self, folder: Path, paths: list[Path], planar: bool = False):
         self.paths = [Path(folder) / (p.stem + ".npy") for p in paths]
         self.mvs_paths = [Path(folder) / "mvs" / (p.stem + ".npy") for p in paths]
         self.metric_paths = [Path(folder) / "metric" / (p.stem + ".npy") for p in paths]
+        self.planar_paths = [
+            Path(folder) / "planar" / (p.stem + ".npz") if planar else None for p in paths
+        ]
         fits_path = Path(folder) / "alignment.json"
         fits = json.loads(fits_path.read_text()) if fits_path.exists() else {}
         self.fits = [fits.get(p.stem) for p in paths]
@@ -183,22 +188,32 @@ class Priors:
             loaded = [np.load(self.paths[index])]
             for path in (self.mvs_paths[index], self.metric_paths[index]):
                 loaded.append(np.load(path) if path.exists() else None)
+            plane_path = self.planar_paths[index]
+            if plane_path is not None and plane_path.exists():
+                with np.load(plane_path) as planes:
+                    loaded.append(np.where(planes["planar"], planes["inverse"], 0.0))
+            else:
+                loaded.append(None)
             self.cache[index] = tuple(
                 None if v is None else torch.from_numpy(v.astype(np.float32)) for v in loaded
             )
-        mono, mvs_depth, metres = (
+        mono, mvs_depth, metres, plane_inverse = (
             None if v is None else v.to(device, non_blocking=True) for v in self.cache[index]
         )
         fit = self.fits[index]
         metric = None
         if fit is not None:
             metric = near_inverse_depth(fit["a"] * mono + fit["b"], metres, self.scales[index])
-        if mvs_depth is None or not (mvs_depth > 0).any():
-            return mono, metric, None
-        measured = mvs_depth > 0
-        mvs_inverse = torch.where(measured, 1 / mvs_depth.clamp_min(1e-9), 0.0)
-        metric = mvs_inverse if metric is None else torch.where(measured, mvs_inverse, metric)
-        return mono, metric, measured
+        measured = None
+        if mvs_depth is not None and (mvs_depth > 0).any():
+            measured = mvs_depth > 0
+            mvs_inverse = torch.where(measured, 1 / mvs_depth.clamp_min(1e-9), 0.0)
+            metric = mvs_inverse if metric is None else torch.where(measured, mvs_inverse, metric)
+        planar = None
+        if plane_inverse is not None and metric is not None and (plane_inverse > 0).any():
+            planar = plane_inverse > 0
+            metric = torch.where(planar, plane_inverse, metric)
+        return mono, metric, measured, planar
 
 
 def textureless_weight(rgb: torch.Tensor, scale: float) -> torch.Tensor:
@@ -217,7 +232,7 @@ def prior_losses(depth, alpha, target, intrinsics, prior, config: SplatConfig):
     ``depth`` and ``alpha`` are the render's, ``target`` the image, all at full size;
     ``prior`` is `Priors.get`'s triple. The comparison runs at the prior's resolution.
     """
-    mono, metric, measured = prior
+    mono, metric, measured, planar = prior
     size = mono.shape
     small_depth = F.interpolate(depth[None, None], size=size, mode="area")[0, 0]
     small_alpha = F.interpolate(alpha[None, None], size=size, mode="area")[0, 0]
@@ -226,12 +241,16 @@ def prior_losses(depth, alpha, target, intrinsics, prior, config: SplatConfig):
         return patch_pearson(small_depth, mono, opaque), small_depth.new_zeros(())
     if measured is None:
         measured = torch.zeros_like(opaque)
+    if planar is None:
+        planar = torch.zeros_like(opaque)
+    # MVS depths passed a multi-view check, and planes fit a wall's depth as a whole.
+    trusted = measured | planar
 
-    # Monocular depth smears across object edges; compare it only away from them. MVS
-    # depths passed a multi-view check and are compared everywhere they exist.
+    # Monocular depth smears across object edges; compare it only away from them. Trusted
+    # depths are compared everywhere they exist.
     gy, gx = torch.gradient(metric)
     smooth = torch.hypot(gx, gy) / metric.clamp_min(1e-6) < 0.05
-    valid = (metric > 0) & (measured | smooth)
+    valid = (metric > 0) & (trusted | smooth)
     if valid.sum() < 64:
         zero = small_depth.new_zeros(())
         return zero, zero
@@ -243,18 +262,20 @@ def prior_losses(depth, alpha, target, intrinsics, prior, config: SplatConfig):
     # turning transparent, and the black background shows through; dark smudges under the
     # ceiling appeared that way on vyas-room. Here a hole costs as much as a wrong depth.
     # Monocular depth gets full weight on blank surfaces and a fifth on texture, where the
-    # photometric loss knows better; measured (MVS) depth gets full weight.
+    # photometric loss knows better; trusted (MVS, plane) depth gets full weight.
     inverse = small_alpha / small_depth.clamp_min(1e-6)
     residual = (inverse - metric)[valid].abs() / metric[valid].median()
-    weight = torch.where(measured, 1.0, 0.2 + 0.8 * textureless)[valid]
+    weight = torch.where(trusted, 1.0, 0.2 + 0.8 * textureless)[valid]
     depth_loss = (weight * residual).sum() / weight.sum()
 
-    # Normals of the smooth monocular shape, on blank surfaces only (MVS has none there).
+    # Normals of the smooth monocular shape on blank surfaces (MVS has none there), and
+    # the planes' normals on every plane pixel, textured or not (a poster stays flat).
     k = intrinsics.clone()
     k[:2] *= size[1] / depth.shape[1]
     rendered_normals = depth_normals(small_depth, k)
     prior_normals = depth_normals(1 / metric.clamp_min(1e-6), k)
-    weight = textureless * (valid & ~measured & smooth) * opaque
+    weight = torch.where(planar & smooth, 1.0, textureless * (valid & ~measured & smooth))
+    weight = weight * opaque
     disagreement = 1 - (rendered_normals * prior_normals).sum(-1)
     normal_loss = (weight * disagreement).sum() / weight.sum().clamp_min(1.0)
     return depth_loss, normal_loss
@@ -268,7 +289,7 @@ def drop_mirror_depths(prior, camera_to_world, intrinsics, width: int, reflector
     the floor). There the reflection layer explains the image, and the surface itself
     gets no depth target rather than a wrong one.
     """
-    mono, metric, measured = prior
+    mono, metric, measured, planar = prior
     if metric is None:
         return prior
     height, columns = metric.shape
@@ -291,7 +312,8 @@ def drop_mirror_depths(prior, camera_to_world, intrinsics, width: int, reflector
         return prior
     metric = torch.where(behind, 0.0, metric)
     measured = None if measured is None else measured & ~behind
-    return mono, metric, measured
+    planar = None if planar is None else planar & ~behind
+    return mono, metric, measured, planar
 
 
 def needle_penalty(log_scales: torch.Tensor, max_ratio: float) -> torch.Tensor:
@@ -485,7 +507,11 @@ def train_splat(
             torch.full((model.count, len(reflectors["planes"])), INITIAL_LOGIT, device=device)
         )
     corrections = Corrections(len(cameras)).to(device)
-    priors = Priors(depth_dir, image_paths) if depth_dir and config.depth_prior_weight > 0 else None
+    priors = (
+        Priors(depth_dir, image_paths, config.planar_prior)
+        if depth_dir and config.depth_prior_weight > 0
+        else None
+    )
     prior_decay = config.depth_prior_weight_final / max(config.depth_prior_weight, 1e-12)
 
     rates = {

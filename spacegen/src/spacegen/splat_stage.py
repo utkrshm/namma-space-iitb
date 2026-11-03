@@ -26,7 +26,8 @@ def build_splat(solution: Solution, output: Path, config: PipelineConfig, depth_
         for i, f in enumerate(solution.frames)
         if every and not f.get("extra") and f.get("position", f["index"]) % every == 0
     ]
-    train = [i for i in range(len(solution.cameras)) if i not in set(val)]
+    held_out = set(val)
+    train = [i for i in range(len(solution.cameras)) if i not in held_out]
     finished = (output / "splat" / "metrics.json").exists()
     if config.depth.metric_model and depth_dir is not None and not finished:
         # Metric depth for surfaces nearer than the SfM points (`spacegen.depth`). Here,
@@ -41,6 +42,10 @@ def build_splat(solution: Solution, output: Path, config: PipelineConfig, depth_
             model_name=config.depth.metric_model,
         )
         align_metric_depth(solution, depth_dir)
+    if config.splat.planar_prior and depth_dir is not None and not finished:
+        from .planar import planar_priors
+
+        planar_priors(solution, train, depth_dir, device, log)
     if (
         (
             config.splat.depth_seed_points

@@ -98,6 +98,7 @@ depth_prior_weight = 0.3
 depth_prior_weight_final = 0.03
 normal_prior_weight = 0.1
 textureless_gradient = 0.05
+planar_prior = false
 saturation_level = 0.98
 depth_seed_points = 0
 mvs_seed_points = 200000
