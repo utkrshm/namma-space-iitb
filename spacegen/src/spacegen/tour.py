@@ -245,6 +245,10 @@ def ease(t: np.ndarray) -> np.ndarray:
     return 0.5 - 0.5 * np.cos(np.pi * np.clip(t, 0, 1))
 
 
+# Walks start and end at capture cameras looking no steeper than this down.
+STEEP_END_DEG = 45.0
+
+
 class WalkPath:
     """The smoothed capture path at walking pace, as a function of time in seconds.
 
@@ -254,10 +258,16 @@ class WalkPath:
     ``max_turn_deg_per_s``: spaced by distance alone, the view whipped round wherever the
     capture turned on the spot (up to 700°/s on coorg and new_home). The view keeps the
     phone's heading and 40% of its tilt, between 35° down and 15° up (much of the m-block
-    video looks straight down at the floor).
+    video looks straight down at the floor). A start or end that looks more than
+    ``STEEP_END_DEG`` down is left out: m-block ends over a bed, looking down at a bag, and
+    a level view from there saw the bed from the side, which no frame filmed.
     """
 
     def __init__(self, cameras, frame: SceneFrame, seconds_per_height, max_turn_deg_per_s):
+        tilt = np.stack([c.camera_to_world[:3, 2] for c in cameras]) @ frame.up
+        level = np.flatnonzero(tilt >= -math.sin(math.radians(STEEP_END_DEG)))
+        if len(level) >= 2:
+            cameras = cameras[level[0] : level[-1] + 1]
         path = np.stack([c.centre for c in cameras])
         forward = np.stack([c.camera_to_world[:3, 2] for c in cameras])
         sigma = max(2.0, len(path) / 150)

@@ -382,10 +382,13 @@ def test_walk_path_turns_slowly_on_the_spot_and_does_not_stare_at_the_floor():
         ]
         return Camera("c", 320, 240, k, look_at(position, position + direction))
 
-    # Walk 2 camera heights along +x, turn 180° on the spot, walk back looking straight down.
+    # Walk 2 camera heights along +x, turn 180° on the spot, walk back looking straight
+    # down, then level for the last stretch; the video ends pointing at the floor.
     cameras = [camera(x, 0, -20) for x in np.linspace(0, 2, 40)]
     cameras += [camera(2, yaw, -20) for yaw in np.linspace(0, 180, 20)]
-    cameras += [camera(x, 180, -90) for x in np.linspace(2, 0, 40)]
+    cameras += [camera(x, 180, -90) for x in np.linspace(2, 0.2, 36)]
+    cameras += [camera(x, 180, -20) for x in np.linspace(0.2, 0, 4)]
+    cameras += [camera(0, 180, -50 - 4 * n) for n in range(10)]
     walk = WalkPath(cameras, frame, 1.8, 45.0)
 
     times = np.linspace(0, walk.duration, int(walk.duration * 30))
@@ -394,10 +397,13 @@ def test_walk_path_turns_slowly_on_the_spot_and_does_not_stare_at_the_floor():
     pitch = np.degrees(np.arcsin(views[:, 2]))
     assert rate.max() <= 46
     assert walk.duration > 2 * 2 * 1.8 * 0.9 + 180 / 45 * 0.9
-    assert pitch.min() >= -35.1  # interpolating between headings dips a little
+    assert pitch.min() >= -36  # interpolating between headings dips a little
     assert pitch[0] == pytest.approx(math.degrees(math.atan(0.4 * math.tan(math.radians(-20)))))
     # Looking straight down, the view keeps the last real heading (back along −x).
-    assert views[-1, 0] / np.linalg.norm(views[-1, :2]) < -0.95
+    downward = np.searchsorted(times, walk.times[60 + 18])
+    assert views[downward, 0] / np.linalg.norm(views[downward, :2]) < -0.95
+    # The steep end is left out: the walk ends at the last level camera.
+    assert len(walk.times) == len(cameras) - 10
     assert np.allclose(np.linalg.inv(walk.pose(walk.duration))[:3, 3], [0, 0, 1], atol=0.05)
 
 

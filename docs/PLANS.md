@@ -14,6 +14,24 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 04-11-26 04:59:55 IST — spacegen: walks leave out a start or end that looks at the floor
+
+- **Status:** adopted (CPU preview of m-block).
+- **Finding:** the m-block CPU tour's walkthrough ended in a smear. The video ends with
+  the phone held over a bed looking down at a bag, tilting from −31° to −62° over the
+  last 30 frames. The walk keeps the heading and only 40% of the tilt, so it looked
+  across the bed from above it, at what was only filmed from straight above. The
+  support check missed it (unmeasured 5–9% there).
+- **Decision:** `tour.WalkPath` (walkthrough and demo clips) starts at the first and ends
+  at the last capture camera that looks no steeper than 45° down (`STEEP_END_DEG`).
+  Steep stretches in the middle stay, as before (heading kept, tilt at most 35° down).
+- **Rationale and trade-offs:** phone videos often start or end pointing at the floor,
+  and the end is the tour's last impression. Only the ends can be cut without a jump.
+  On m-block this removes the last 2.9 s of a 14.6 s walk; on vyas_room, new_home and
+  coorg nothing.
+- **Affected components:** `spacegen.tour.WalkPath`, tests.
+- **Completion criteria:** CPU test; m-block's walkthrough end re-rendered on the CPU.
+
 ## 04-11-26 04:52:49 IST — spacegen: the overview keeps what lies under a glossy floor
 
 - **Status:** adopted (CPU renders of three runs).
