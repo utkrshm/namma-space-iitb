@@ -2,7 +2,7 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `04-11-26 03:13:45 IST`
+**Last updated:** `04-11-26 05:06:30 IST`
 
 ## Current Focus
 
@@ -44,8 +44,13 @@ Done since, CPU-tested only (GPU tests and re-renders not run), see [PLANS.md](P
   average exposure, brighter than the phone's whenever the window was in view. On held-out
   views, blending the neighbouring training cameras' colour maps gives 22.06 → 26.15 dB
   (vyas_room), 20.71 → 26.75 (m-block) and 22.33 → 24.85 (new_home). The CPU tour
-  shows the window grille and no haze. Reported held-out PSNR is unchanged (identity
-  colour map).
+  shows the window grille and no haze. Held-out `psnr` and `psnr_cc` are unchanged; a
+  new `psnr_nb` scores renders with the neighbours' exposure, as the videos show them;
+- CPU previews found two more tour faults, both fixed. The overview showed no floor on
+  vyas_room and m-block: a glossy floor is learned as a half-transparent surface over a
+  mirrored room, and the cut dropped what lies under it. And m-block's walkthrough ended
+  in a smear: the video ends looking down at a bed, so walks now leave out a start or
+  end steeper than 45° down.
 
 Work is on `feat/spacegen`: `spacegen/`, a standalone pipeline from any indoor video to
 a Gaussian splat with tour and demo videos (see `spacegen/docs/ARCHITECTURE.md`,
