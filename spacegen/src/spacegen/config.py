@@ -148,6 +148,12 @@ class SplatConfig:
     appearance: bool = True
     appearance_lr: float = 1e-3
     appearance_regularization: float = 1e-3
+    # Per-image bilateral grid (depth, height, width) instead of one affine colour map per
+    # image (`splat.train.Corrections`); empty keeps the affine map. Its learning rate and
+    # total-variation weight follow gsplat's bilateral-grid example.
+    bilateral_grid: tuple[int, ...] = ()
+    bilateral_lr: float = 2e-3
+    bilateral_tv_weight: float = 10.0
     # Depth prior: L1 between rendered and fitted metric inverse depth (relative to the
     # image's median), or a Pearson correlation for images without a fit. The weight
     # decays exponentially from the first value to the second over the whole run; it

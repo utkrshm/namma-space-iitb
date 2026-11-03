@@ -10,8 +10,11 @@ blocks. Coorg's blocks were typed-in time ranges; here they are found automatica
    observes at least ``overlap`` of the SfM points its own cameras see. Its borders are
    then trained from both sides, as in VastGaussian.
 3. **Merge:** each Gaussian goes to the block whose own cameras observe its position
-   best (argmax of Σ 1/depth² over visible cameras). Nearest-camera ownership failed on
-   Coorg, because a walk passes through the same room at several times.
+   best (argmax of Σ 1/depth² over the cameras that see it). Nearest-camera ownership
+   failed on Coorg, because a walk passes through the same room at several times. A
+   camera "sees" a position only if it is in view and not behind the surface the
+   camera's depth map shows there: without that test, a camera in the next room, close
+   to the other side of a shared wall, outvoted the block that trained the wall.
 4. **Joint fine-tune** of the merged model on every training image, at full resolution.
 
 Output: ``<run>/blocks/<k>/`` (block runs), ``<run>/blocks/merged.ply``, and the final
@@ -81,9 +84,46 @@ def block_cameras(solution: Solution, labels: np.ndarray, train: list[int], over
     return blocks
 
 
+# A camera sees a point only if the point is no farther than this times the surface its
+# depth map shows there; farther points are behind that surface (the other side of a
+# wall, with walls 0.1–0.2 m thick seen from 1–3 m).
+OCCLUSION_MARGIN = 1.05
+
+
+def surface_maps(depth_dir, image_paths, cameras, device, long_side: int = 128):
+    """Per camera, its nearest surface as inverse depth on a small grid [C,h,w] (0 where
+    unknown), from the training depth priors (MVS, else fitted monocular depth); None
+    without any."""
+    from .splat.train import Priors
+
+    if depth_dir is None:
+        return None
+    priors = Priors(depth_dir, image_paths)
+    width, height = cameras[0].width, cameras[0].height
+    size = (
+        max(1, round(long_side * height / max(width, height))),
+        max(1, round(long_side * width / max(width, height))),
+    )
+    maps = torch.zeros((len(cameras), *size), device=device)
+    found = False
+    for index in range(len(cameras)):
+        prior = priors.get(index, device)
+        if prior is None or prior[1] is None:
+            continue
+        # Max-pooled inverse depth: the nearest surface in each cell, so an edge cell does
+        # not hide what lies just in front of the far side.
+        maps[index] = torch.nn.functional.adaptive_max_pool2d(prior[1][None, None], size)[0, 0]
+        found = True
+    return maps if found else None
+
+
 @torch.no_grad()
-def visibility_owner(cameras, labels: np.ndarray, points: np.ndarray, device: str) -> np.ndarray:
-    """Block whose own cameras observe each point best: argmax over blocks of Σ 1/depth²."""
+def visibility_owner(
+    cameras, labels: np.ndarray, points: np.ndarray, device: str, surfaces=None
+) -> np.ndarray:
+    """Block whose own cameras observe each point best: argmax over blocks of Σ 1/depth²
+    over the cameras that see it. With ``surfaces`` (`surface_maps`), a point behind the
+    surface a camera sees does not count for that camera."""
     count = int(labels.max()) + 1
     world_to_camera = torch.tensor(
         np.stack([c.world_to_camera for c in cameras]), dtype=torch.float32, device=device
@@ -106,6 +146,13 @@ def visibility_owner(cameras, labels: np.ndarray, points: np.ndarray, device: st
             / depth.clamp_min(1e-6)[..., None]
         )
         visible = (depth > 0) & (pixels >= 0).all(-1) & (pixels < sizes[:, None]).all(-1)
+        if surfaces is not None:
+            # grid_sample coordinates: −1 and 1 are the outer image edges.
+            grid = (pixels + 0.5) / sizes[:, None] * 2 - 1
+            surface = torch.nn.functional.grid_sample(
+                surfaces[:, None], grid[:, None], mode="nearest", align_corners=False
+            )[:, 0, 0]
+            visible &= (surface <= 0) | (depth * surface <= OCCLUSION_MARGIN)
         weight = torch.where(visible, 1 / depth.clamp_min(1e-3) ** 2, 0.0)
         per_block = torch.zeros(count, len(chunk), device=device)
         per_block.index_add_(0, label_tensor, weight)
@@ -168,10 +215,15 @@ def train_in_blocks(
     merged_path = folder / "merged.ply"
     if not merged_path.exists():
         parts = []
+        surfaces = surface_maps(depth_dir, solution.image_paths, solution.cameras, device)
         for number in range(len(blocks)):
             model = load_ply(folder / str(number) / "scene.ply", device)
             owner = visibility_owner(
-                solution.cameras, labels, model.params["means"].detach().cpu().numpy(), device
+                solution.cameras,
+                labels,
+                model.params["means"].detach().cpu().numpy(),
+                device,
+                surfaces,
             )
             parts.append(model.subset(torch.from_numpy(owner == number).to(device)))
             log(f"block {number}: kept {int((owner == number).sum())} of {model.count}")

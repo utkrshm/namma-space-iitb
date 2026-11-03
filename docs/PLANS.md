@@ -14,7 +14,33 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
-## 03-11-26 23:55:00 IST — spacegen: plane prior for walls, floors and ceilings (experiment)
+## 03-11-26 23:36:05 IST — spacegen: occlusion-aware block merge, reflection alignment, bilateral grid
+
+- **Status:** occlusion-aware merge and reflection alignment adopted (CPU-tested; GPU
+  not run). Bilateral grid behind `splat.bilateral_grid` (off); A/B queued
+  (`outputs/spacegen/ab_queue2.sh`).
+- **Decision:**
+  1. Block merge: a camera votes for a Gaussian's owner only if the Gaussian is not
+     behind the surface that camera's depth prior shows (5% margin). Before, a camera
+     in the next room, close to the other side of a shared wall, outvoted the block
+     that trained the wall. A candidate cause of the block-border losses on new_home
+     (frames 00280, 00096, 00160 lose ~6 dB); to be checked when the GPU is back.
+  2. Reflections: the half-resolution mirror pass is placed on an exact ⌈W/2⌉ × ⌈H/2⌉
+     canvas; on odd image sizes it was stretched by a pixel, shifting reflections.
+  3. Per-image bilateral grid of affine colour maps (Wang et al. 2024's bilateral-guided
+     radiance fields; gsplat's example settings: 8×16×16 cells, lr 2e-3, TV weight 10),
+     indexed by position and brightness, instead of one affine map per image: it can
+     absorb local tone mapping and vignetting, which otherwise turn into blotches.
+- **Rationale and trade-offs:** (1) and (2) fix wrong results. (3) adds 25k parameters
+  per image; held-out views still render without correction, so the gain should show in
+  colour-corrected PSNR and in cleaner tour colours, not in raw PSNR.
+- **Affected components:** `partition.py`, `splat/reflect.py`, `splat/train.py`
+  (`Corrections`, `bilateral_slice`), `fill.py`, `config.py`.
+- **Completion criteria:** GPU tests pass; bilateral A/B on vyas_room_v4 and
+  room_m_block_v4 better in colour-corrected PSNR with no raw-PSNR loss before it is
+  switched on.
+
+## 03-11-26 23:31:00 IST — spacegen: plane prior for walls, floors and ceilings (experiment)
 
 - **Status:** implemented behind `splat.planar_prior` (off); A/B queued
   (`outputs/spacegen/ab_queue.sh`, after the GPU tests and the m block retrain).

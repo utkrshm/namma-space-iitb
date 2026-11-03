@@ -463,3 +463,51 @@ def test_priors_use_planes_only_when_switched_on(tmp_path):
     assert torch.allclose(metric[:, :4], torch.tensor(0.25)) and torch.allclose(
         metric[:, 4:], torch.tensor(0.5)
     )
+
+
+def test_block_ownership_ignores_cameras_behind_a_wall():
+    """A 0.1 m wall at x = 0 between two rooms. Camera A (block 0) films its left face
+    from 1.95 m; camera B (block 1) films the right face from 0.75 m. Without occlusion
+    the left face goes to B, the closer camera, which never saw it; with B's depth map
+    it stays with A."""
+    from spacegen.partition import visibility_owner
+
+    k = np.array([[100.0, 0, 63.5], [0, 100.0, 47.5], [0, 0, 1]])
+    a = Camera("a", 128, 96, k, look_at(np.array([-2.0, 0, 1]), np.array([0.0, 0, 1])))
+    b = Camera("b", 128, 96, k, look_at(np.array([0.8, 0, 1]), np.array([0.0, 0, 1])))
+    rng = np.random.default_rng(0)
+    left_face = np.c_[np.full(200, -0.05), rng.uniform(-0.3, 0.3, 200), rng.uniform(0.7, 1.3, 200)]
+    labels = np.array([0, 1])
+    assert (visibility_owner([a, b], labels, left_face, "cpu") == 1).all()
+
+    # Depth maps: A sees the left face at 1.95 m, B the right face at 0.75 m (inverse depth).
+    surfaces = torch.stack((torch.full((24, 32), 1 / 1.95), torch.full((24, 32), 1 / 0.75)))
+    assert (visibility_owner([a, b], labels, left_face, "cpu", surfaces) == 0).all()
+
+
+def test_bilateral_grid_starts_at_identity_and_maps_by_brightness():
+    from spacegen.splat.train import Corrections, bilateral_slice
+
+    rng = np.random.default_rng(0)
+    rgb = torch.tensor(rng.uniform(0, 1, (30, 40, 3)), dtype=torch.float32)
+    residual = torch.zeros(12, 8, 4, 4)
+    assert torch.allclose(bilateral_slice(residual, rgb), rgb)
+
+    # Brighten only the brightest grey levels by 20% (the top grid layer), as a phone's
+    # local tone mapping might: dark pixels must not change.
+    residual[0, -1] = residual[4, -1] = residual[8, -1] = 0.2
+    out = bilateral_slice(residual, rgb)
+    grey = rgb @ torch.tensor([0.299, 0.587, 0.114])
+    dark = grey < 6 / 7 * 0.5  # below the layer next to the top one
+    assert torch.allclose(out[dark], rgb[dark])
+    assert (out[grey > 0.95] > rgb[grey > 0.95]).all()
+
+    corrections = Corrections(5, (8, 4, 4))
+    with torch.no_grad():
+        corrections.grid += torch.randn_like(corrections.grid)
+    corrections.centre(torch.tensor([0, 1, 2]))
+    assert corrections.grid[:3].mean(0).abs().max() < 1e-6
+    loaded = Corrections.for_state(corrections.state_dict())
+    loaded.load_state_dict(corrections.state_dict())
+    assert torch.equal(loaded.grid, corrections.grid)
+    assert Corrections.for_state(Corrections(5).state_dict()).grid is None

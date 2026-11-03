@@ -314,12 +314,16 @@ def render_with_reflections(
             rasterize_mode=mode,
             near_plane=near_plane,
         )
+        # On a half-resolution canvas of exactly ⌈W/2⌉ × ⌈H/2⌉, doubled and cropped: a
+        # canvas sized W//2 while the box reached ⌈W/2⌉ stretched odd-sized images by a
+        # pixel, shifting the reflection off the mirror.
+        half_width, half_height = (width + 1) // 2, (height + 1) // 2
         half = F.pad(
             mirrored[0].permute(2, 0, 1),
-            (left, max(0, width // 2 - right), top, max(0, height // 2 - bottom)),
+            (left, half_width - right, top, half_height - bottom),
         )
-        mirrored = F.interpolate(half[None], size=(height, width), mode="bilinear")[0]
-        mirrored = mirrored.permute(1, 2, 0)
+        mirrored = F.interpolate(half[None], scale_factor=2, mode="bilinear")[0]
+        mirrored = mirrored[:, :height, :width].permute(1, 2, 0)
         cosine = (rays @ plane[:3]).abs()
         f0 = torch.sigmoid(reflectors["f0"][index])
         fresnel = f0 + (1 - f0) * (1 - cosine) ** 5

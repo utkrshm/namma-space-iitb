@@ -322,3 +322,53 @@ def test_training_killed_mid_run_resumes_from_its_checkpoint(tmp_path):
     steps = [json.loads(r)["step"] for r in (tmp_path / "killed" / "training.jsonl").open()]
     assert steps == sorted(set(steps)) and steps[-1] == 1499
     assert again["val"]["psnr"] > whole["val"]["psnr"] - 0.5, (again["val"], whole["val"])
+
+
+def test_training_with_a_bilateral_grid_recovers_a_rendered_wall(tmp_path):
+    """The bilateral-grid colour model trains, saves and reloads like the affine one."""
+    from spacegen.splat.train import Corrections
+
+    truth = textured_wall()
+    cameras = front_cameras(30)
+    paths = []
+    for number, camera in enumerate(cameras):
+        with torch.no_grad():
+            rgb, _, _, _ = render_camera(truth, camera)
+        # Every third image a little brighter in its bright parts: local tone mapping.
+        if number % 3 == 0:
+            rgb = rgb + 0.15 * rgb.clamp(0, 1) ** 2
+        path = tmp_path / f"{camera.name}.png"
+        cv2.imwrite(str(path), (rgb.clamp(0, 1) * 255).round().byte().cpu().numpy()[..., ::-1])
+        paths.append(path)
+    rng = np.random.default_rng(0)
+    points = np.c_[rng.uniform(-1, 1, 400), rng.normal(0, 0.02, 400), rng.uniform(0, 2, 400)]
+    config = SplatConfig(
+        steps=1500,
+        max_gaussians=20_000,
+        resolution_schedule=((0, 1),),
+        holdout_every=0,
+        pose_refinement=False,
+        appearance=True,
+        bilateral_grid=(4, 8, 8),
+        depth_prior_weight=0.0,
+        refine_stop=1200,
+        evaluate_every=10**9,
+        checkpoint_every=10**9,
+        log_every=500,
+    )
+    train = [i for i in range(30) if i % 5]
+    val = [i for i in range(30) if i % 5 == 0 and i % 3]  # held out, not brightened
+    metrics = train_splat(
+        cameras,
+        paths,
+        points.astype(np.float32),
+        np.full((400, 3), 0.5, np.float32),
+        tmp_path / "run",
+        config,
+        train_indices=train,
+        val_indices=val,
+        log=lambda _: None,
+    )
+    assert metrics["val"]["psnr"] > 24, metrics["val"]
+    state = torch.load(tmp_path / "run" / "checkpoint.pt", weights_only=True)["corrections"]
+    assert Corrections.for_state(state).grid.shape[1:] == (12, 4, 8, 8)

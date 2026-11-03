@@ -88,13 +88,33 @@ def rotation_6d(value: torch.Tensor) -> torch.Tensor:
 
 
 class Corrections(torch.nn.Module):
-    """Per-image pose increment (camera frame) and affine colour map, both starting at identity."""
+    """Per-image pose increment (camera frame) and colour map, both starting at identity.
 
-    def __init__(self, count: int):
+    The colour map is one affine map per image (``colour`` [N,12]: 3×3 matrix and offset,
+    as residuals from identity), or with ``grid`` = (depth, height, width) a bilateral
+    grid of such maps per image (``grid`` [N,12,D,H,W]; Chen et al. 2007, as used for
+    radiance fields by Wang et al. 2024): the map depends on pixel position and
+    brightness, so it absorbs a phone's local tone mapping and vignetting, which one
+    affine map per image cannot, and which the splat would otherwise bake into its
+    colours as blotches.
+    """
+
+    def __init__(self, count: int, grid: tuple[int, int, int] | None = None):
         super().__init__()
         self.pose = torch.nn.Parameter(torch.zeros(count, 9))
         self.colour = torch.nn.Parameter(torch.zeros(count, 12))
+        self.grid = torch.nn.Parameter(torch.zeros(count, 12, *grid)) if grid else None
         self.register_buffer("identity", torch.tensor([1.0, 0, 0, 0, 1, 0]))
+
+    @classmethod
+    def for_state(cls, state: dict) -> Corrections:
+        """Empty corrections shaped like a saved ``state_dict``."""
+        grid = state.get("grid")
+        return cls(len(state["pose"]), tuple(grid.shape[2:]) if grid is not None else None)
+
+    @property
+    def colour_parameter(self) -> torch.nn.Parameter:
+        return self.grid if self.grid is not None else self.colour
 
     def camera_to_world(self, index: int, base: torch.Tensor) -> torch.Tensor:
         delta = torch.eye(4, device=base.device)
@@ -103,8 +123,43 @@ class Corrections(torch.nn.Module):
         return base @ delta
 
     def apply_colour(self, index: int, rgb: torch.Tensor) -> torch.Tensor:
-        matrix = torch.eye(3, device=rgb.device) + self.colour[index, :9].view(3, 3)
-        return rgb @ matrix.T + self.colour[index, 9:]
+        if self.grid is None:
+            matrix = torch.eye(3, device=rgb.device) + self.colour[index, :9].view(3, 3)
+            return rgb @ matrix.T + self.colour[index, 9:]
+        return bilateral_slice(self.grid[index], rgb)
+
+    def colour_penalty(self, index: int, tv_weight: float) -> torch.Tensor:
+        """L2 of the residual map, plus for grids ``tv_weight`` × total variation."""
+        if self.grid is None:
+            return self.colour[index].square().sum()
+        cell = self.grid[index]
+        variation = sum(cell.diff(dim=d).square().mean() for d in (1, 2, 3))
+        return cell.square().mean() + tv_weight * variation
+
+    @torch.no_grad()
+    def centre(self, train: torch.Tensor) -> None:
+        """Zero-mean colour maps over the training images: a shared offset in every map is
+        the same as a change of the Gaussians' colours, so this pins the canonical colours
+        to the average training exposure, which viewers and held-out views render."""
+        parameter = self.colour_parameter
+        parameter[train] -= parameter[train].mean(0)
+
+
+def bilateral_slice(residual: torch.Tensor, rgb: torch.Tensor) -> torch.Tensor:
+    """``rgb`` [H,W,3] through the bilateral grid ``residual`` [12,D,H',W'] of affine maps
+    (residuals from identity), indexed by pixel position and grey level (trilinear)."""
+    height, width = rgb.shape[:2]
+    grey = (rgb.detach() @ rgb.new_tensor([0.299, 0.587, 0.114])).clamp(0, 1) * 2 - 1
+    ys, xs = torch.meshgrid(
+        torch.linspace(-1, 1, height, device=rgb.device),
+        torch.linspace(-1, 1, width, device=rgb.device),
+        indexing="ij",
+    )
+    # grid_sample's last axis is (x, y, z) = (width, height, depth) of the grid.
+    where = torch.stack((xs, ys, grey), -1)[None, None]  # [1,1,H,W,3]
+    maps = F.grid_sample(residual[None], where, align_corners=True)[0, :, 0]  # [12,H,W]
+    matrix = maps[:9].reshape(3, 3, height, width)
+    return rgb + torch.einsum("ijhw,hwj->hwi", matrix, rgb) + maps[9:].permute(1, 2, 0)
 
 
 def fit_colour(rendered: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
@@ -506,7 +561,7 @@ def train_splat(
         model.params["reflect"] = torch.nn.Parameter(
             torch.full((model.count, len(reflectors["planes"])), INITIAL_LOGIT, device=device)
         )
-    corrections = Corrections(len(cameras)).to(device)
+    corrections = Corrections(len(cameras), config.bilateral_grid or None).to(device)
     priors = (
         Priors(depth_dir, image_paths, config.planar_prior)
         if depth_dir and config.depth_prior_weight > 0
@@ -530,7 +585,8 @@ def train_splat(
         model.reflectors["f0"] = model.reflectors["f0"].detach().requires_grad_(True)
         fresnel_optimizer = torch.optim.Adam([model.reflectors["f0"]], lr=config.reflect_lr)
     pose_optimizer = torch.optim.Adam([corrections.pose], lr=config.pose_lr)
-    colour_optimizer = torch.optim.Adam([corrections.colour], lr=config.appearance_lr)
+    colour_rate = config.bilateral_lr if corrections.grid is not None else config.appearance_lr
+    colour_optimizer = torch.optim.Adam([corrections.colour_parameter], lr=colour_rate)
     decay = (config.means_lr_final / config.means_lr) ** (1 / config.steps)
     strategy = MCMCStrategy(
         cap_max=max(config.max_gaussians, model.count),
@@ -637,9 +693,8 @@ def train_splat(
                 config.depth_prior_weight * depth_loss + config.normal_prior_weight * normal_loss
             )
         if config.appearance:
-            loss = (
-                loss + config.appearance_regularization * corrections.colour[index].square().sum()
-            )
+            penalty = corrections.colour_penalty(index, config.bilateral_tv_weight)
+            loss = loss + config.appearance_regularization * penalty
         loss.backward()
 
         for optimizer in optimizers.values():
@@ -653,11 +708,7 @@ def train_splat(
         pose_optimizer.zero_grad(set_to_none=True)
         if config.appearance:
             colour_optimizer.step()
-            # A shared offset in every image's colour map is the same as a change of the
-            # Gaussians' colours; zero-mean maps pin the canonical colours to the average
-            # training exposure, which is what viewers and held-out views render.
-            with torch.no_grad():
-                corrections.colour[train_tensor] -= corrections.colour[train_tensor].mean(0)
+            corrections.centre(train_tensor)
         colour_optimizer.zero_grad(set_to_none=True)
         with torch.no_grad():
             model.params["scales"].clamp_(max=math.log(config.max_scale_fraction * extent))
@@ -835,7 +886,7 @@ def _load_mid_run(output: Path, model, corrections, trainers: dict, run_key: str
         model.reflectors["f0"] = state["f0"].to(model.device).requires_grad_(True)
         trainers["fresnel"].param_groups[0]["params"] = [model.reflectors["f0"]]
     trainers["pose"].param_groups[0]["params"] = [corrections.pose]
-    trainers["colour"].param_groups[0]["params"] = [corrections.colour]
+    trainers["colour"].param_groups[0]["params"] = [corrections.colour_parameter]
     for name, trainer in trainers.items():
         trainer.load_state_dict(training["trainers"][name])
     return {**training, "step": int(state["step"])}

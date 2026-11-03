@@ -358,8 +358,9 @@ def distil(
     state = torch.load(
         Path(run) / "splat" / "checkpoint.pt", map_location=device, weights_only=True
     )
-    corrections = Corrections(len(cameras)).to(device)
+    corrections = Corrections.for_state(state["corrections"]).to(device)
     corrections.load_state_dict(state["corrections"])
+    corrections.requires_grad_(False)
     from .reslice import run_solution
 
     solution = run_solution(run)
@@ -410,10 +411,7 @@ def distil(
                 mode=splat.rasterize_mode,
             )
             if splat.appearance:
-                with torch.no_grad():
-                    matrix = torch.eye(3, device=device) + corrections.colour[index, :9].view(3, 3)
-                    offset = corrections.colour[index, 9:]
-                rgb = rgb @ matrix.T + offset
+                rgb = corrections.apply_colour(index, rgb)
             loss = 0.8 * (rgb - target_rgb).abs().mean() + 0.2 * (1 - ssim(rgb, target_rgb))
         loss.backward()
         optimizer.step()
