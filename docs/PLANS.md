@@ -14,6 +14,57 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 04-11-26 03:22:34 IST — spacegen: tours and demos render with the capture's own exposure near each view
+
+- **Status:** adopted (render-only; CPU-checked on held-out views and by eye).
+- **Finding (CPU renders):** the white haze around vyas_room's window in the area-2
+  look-around is exposure, not geometry. Training absorbs the phone's auto-exposure and
+  white balance in one colour map per training image (`splat.train.Corrections`, zero
+  mean over the images). The splat's own colours therefore sit at the video's average
+  exposure. The phone exposed down whenever the window was in view, so a render at the
+  average exposure is far brighter there, and the window and the curtain next to it pass
+  white. Training view 00219 with its own colour map scores 27.45 dB against the frame,
+  grille visible; without it, as tours and held-out scores render it, 12.43 dB. The
+  reflection layer adds at most 0.006 there.
+- **Decision:** `spacegen.exposure.CaptureExposure` blends the colour maps of the
+  training cameras near a view:
+  - weights exp(−½ (distance / `exposure_radius`)²) · exp(−½ (angle / `exposure_cone_deg`)²),
+    over camera position (camera heights) and viewing direction;
+  - a weight of 0.05 on the identity map, so a view far from every capture camera
+    (the overview, the build-up) keeps the average exposure;
+  - in a video, the blended map follows an exponential moving average with a 0.25 s time
+    constant, like a camera's auto-exposure, and restarts with each section.
+
+  The tour (look-arounds, walkthrough) and the demo's highlight reel apply it before
+  clipping. It is on by default (`tour.capture_exposure`, `demo.capture_exposure`;
+  radius 0.15, cone 10°) and reads the maps from `splat/checkpoint.pt`. It falls back to
+  the average exposure without them. Training and the held-out scores are unchanged.
+- **Rationale and trade-offs:** held-out views are the test: their own maps never enter.
+  Their neighbours' blend against identity, at 160 px wide:
+
+  | Run | Radius, cone | Identity | Blended | Views > 0.5 dB worse |
+  | --- | --- | --- | --- | --- |
+  | vyas_room_v4 | 1.0, 45° | 22.06 | 23.69 | 12 of 49 |
+  | vyas_room_v4 | 0.5, 30° | 22.06 | 24.36 | 9 of 49 (mirror frames 00312, 00320, −3 to −4 dB) |
+  | vyas_room_v4 | 0.25, 15° | 22.06 | 25.54 | 5 of 49 |
+  | vyas_room_v4 | 0.15, 10° | 22.06 | 26.15 | 4 of 49 (worst 00192, −3.1) |
+  | room_m_block_v4 | 0.15, 10° | 20.71 | 26.75 | 1 of 26 (−1.3) |
+  | new_home_v2 | 0.15, 10° | 22.33 | 24.85 | 8 of 124 (worst 00040, −1.7) |
+
+  At 0.15, 10° the blown-window frames recover: 00208 goes from 12.1 to 28.2 dB, 00216 from
+  12.4 to 28.5. A tight kernel follows the phone's exposure, which changes quickly as
+  it turns. Tour poses lie on or near the capture path, so there are enough neighbours.
+  The cost is that the video's brightness now varies with the view direction, as in
+  the capture, instead of staying constant. The trade: a constant exposure blows out
+  every bright window.
+- **Affected components:** new `spacegen.exposure`; `tour.Renderer`, `render_tour`,
+  `render_demo`; `TourConfig`, `DemoConfig` (`capture_exposure`, `exposure_radius`,
+  `exposure_cone_deg`); tests; ARCHITECTURE.
+- **Completion criteria:** CPU tests (a view at a training camera takes its map, a far view
+  keeps identity, the smoothing converges); the vyas_room area-2 look-around re-rendered
+  on the CPU with the grille visible and no haze; new_home's held-out views checked like
+  the table (done: +2.5 dB); the GPU re-renders (on_gpu.sh) then use it.
+
 ## 04-11-26 03:08:22 IST — spacegen: leave out pixels that most other views see straight through (moving doors, wrong depth)
 
 - **Status:** adopted, off by default (`splat.transient_views = 0`) until its A/B test

@@ -39,8 +39,13 @@ Done since, CPU-tested only (GPU tests and re-renders not run), see [PLANS.md](P
   `ab_queue4.sh`) leaves such pixels out of training. It flags 14 of 394 vyas_room
   images (mostly the open door), almost nothing on m-block and nothing on new_home.
 
-Open, seen in CPU renders: the bright window in vyas_room's area 2 spreads a white haze
-into the room in the look-around.
+- tours and demos render with the capture's own exposure near each view
+  (`spacegen.exposure`). The white haze around vyas_room's window was the video's
+  average exposure, brighter than the phone's whenever the window was in view. On held-out
+  views, blending the neighbouring training cameras' colour maps gives 22.06 → 26.15 dB
+  (vyas_room), 20.71 → 26.75 (m-block) and 22.33 → 24.85 (new_home). The CPU tour
+  shows the window grille and no haze. Reported held-out PSNR is unchanged (identity
+  colour map).
 
 Work is on `feat/spacegen`: `spacegen/`, a standalone pipeline from any indoor video to
 a Gaussian splat with tour and demo videos (see `spacegen/docs/ARCHITECTURE.md`,
