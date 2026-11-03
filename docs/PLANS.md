@@ -14,6 +14,25 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 04-11-26 01:12:46 IST — spacegen: look-arounds try several standing points before skipping an area
+
+- **Status:** adopted (selection CPU-tested; renders checked when the GPU is back).
+- **Decision:** per area, `tour.filmed_standing_points` ranks training-camera positions
+  by filmed arc (as before) and keeps up to `tour.look_candidates` (5) that lie at least
+  0.25 camera heights apart. The tour takes the first whose arc passes the existing
+  checks (`max_unmeasured` 5%, `max_unrendered` 1%, ≥ 30°). A skipped area records each
+  candidate's longest passing sweep and median shares in `tour.json`.
+- **Rationale and trade-offs:** only one point was tried, and the look-around was
+  skipped in 6 of 9 areas (vyas_room v3 and v4 both areas, m-block, coorg area 2; only
+  new_home passed): the widest arc is not the best-rendered spot, and fill content (20–40%
+  of Gaussians) counts as unmeasured. The thresholds stay, since full turns over
+  generated content smeared (30 Oct). Neighbouring frames see nearly the same views, hence
+  the spacing. Cost: up to 5× the 320 × 180 check renders for a failing area.
+- **Affected components:** `spacegen.tour` (`filmed_standing_points`, `_checked_arc`,
+  `render_tour`), `TourConfig.look_candidates`.
+- **Completion criteria:** CPU test of the candidate ranking and spacing; on the GPU, the
+  m-block and vyas_room tours re-rendered and checked by eye.
+
 ## 04-11-26 01:06:08 IST — spacegen: atomic writes for every file a resumed run trusts
 
 - **Status:** adopted (CPU-tested).

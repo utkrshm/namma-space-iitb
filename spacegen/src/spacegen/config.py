@@ -275,6 +275,8 @@ class TourConfig:
     max_unmeasured: float = 0.05
     max_unrendered: float = 0.01
     min_look_deg: float = 30.0
+    # Standing points tried per area before its look-around is skipped.
+    look_candidates: int = 5
     walk_seconds_per_metre: float = 1.2
     # The walkthrough slows down where the capture turned on the spot (`tour.WalkPath`).
     max_turn_deg_per_s: float = 45.0

@@ -7,8 +7,10 @@
 2. **Look-around:** at each area's standing point, a turn through the directions the
    capture filmed from near there, at the phone's own tilt (`filmed_arc`). Every 5° view
    is checked before rendering (`_checked_arc`); only the longest passing part is played,
-   out and back, and an area with too little is skipped. A full 360° turn over generated
-   content smeared and invented walls in the first areas of the vyas-room tour.
+   out and back. Up to ``look_candidates`` standing points are tried per area; an area
+   where none passes is skipped (``tour.json`` lists what each one scored). A full 360°
+   turn over generated content smeared and invented walls in the first areas of the
+   vyas-room tour.
 3. **Walkthrough:** eye level along the smoothed capture path, at walking pace.
 
 Frames are rendered at ``supersample`` × the output size and area-downsampled, so fine
@@ -39,6 +41,8 @@ from .support import support_map
 # clothes, shadowed shelves) settle at alpha 0.6–0.9 and still render correctly, so 0.9
 # flagged them as holes (vyas-room look-arounds); real holes are far more transparent.
 HOLE_ALPHA = 0.5
+# Look-around candidates closer than this (camera heights) see nearly the same views.
+MIN_CANDIDATE_GAP = 0.25
 
 
 def _intrinsics(width: int, height: int, fov_deg: float) -> np.ndarray:
@@ -348,17 +352,19 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
     train = [i for i, split in enumerate(splits) if split == "train"]
     for stand in filmed_standing_points(frame, cameras, train, config):
         renderer.reset()
-        arc = stand["arc"]
-        checked = None
-        if arc is not None:
-            eye = frame.to_world(np.array(stand["eye_aligned"])[None])[0]
-            checked = _checked_arc(model, frame, eye, arc, config)
-        if checked is None:
-            sections.append(
-                {"name": f"look-around {stand['area']}", "frames": 0, "skipped": arc or "no arc"}
-            )
+        name = f"look-around {stand['area']}"
+        checked, tried = None, []
+        for candidate in stand["candidates"]:
+            eye = frame.to_world(np.array(candidate["eye_aligned"])[None])[0]
+            checked = _checked_arc(model, frame, eye, candidate["arc"], config)
+            tried.append({"camera": candidate["camera"], **checked["summary"]})
+            if checked["sweep"] is not None:
+                break
+        if checked is None or checked["sweep"] is None:
+            sections.append({"name": name, "frames": 0, "skipped": tried or "no arc"})
             continue
-        (first, last), pitch, scores = checked
+        arc = candidate["arc"]
+        (first, last), pitch, scores = checked["sweep"], checked["pitch"], checked["scores"]
         frames = int(config.look_seconds * fps * min(1.0, (last - first) / math.radians(90)))
         half = ease(np.linspace(0, 1, max(frames // 2, 2)))
         yaws = np.concatenate((first + (last - first) * half, last + (first - last) * half))
@@ -370,8 +376,10 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
             writer.write(label(renderer(world_to_camera), f"Standing in {stand['area']}"))
         sections.append(
             {
-                "name": f"look-around {stand['area']}",
+                "name": name,
                 "frames": len(yaws),
+                "camera": candidate["camera"],
+                "candidates_tried": tried,
                 "sweep_deg": math.degrees(last - first),
                 "pitch_deg": math.degrees(pitch),
                 "nearby_cameras": arc["cameras"],
@@ -421,38 +429,39 @@ def _heading(camera: Camera, frame: SceneFrame) -> float:
 
 
 def filmed_standing_points(frame: SceneFrame, cameras, train: list[int], config: TourConfig):
-    """Per area, the training camera position with the widest filmed arc around it.
+    """Per area, up to ``look_candidates`` training camera positions with the widest filmed
+    arcs around them, at least ``MIN_CANDIDATE_GAP`` camera heights apart, best first.
 
     The area's middle is often a spot the phone only passed through, facing one way (in
     vyas-room the camera nearest each area's centre had a 10° arc, against 80–110° at the
-    best spot). Ties go to more nearby cameras. The eye keeps that camera's height.
+    best spot). Ties go to more nearby cameras. The widest arc is not always the spot that
+    renders best, so the tour tries the others when its checks fail. The eye keeps that
+    camera's height. Each area: ``{"area", "candidates": [{"camera", "eye_aligned",
+    "arc"}]}`` (no candidates when no camera has an arc).
     """
     centres = frame.to_aligned(np.stack([c.centre for c in cameras]))
     allowed = set(train)
     stands = []
     for area in frame.areas:
-        best, best_key = None, (-1.0, -1)
+        ranked = []
         for index in area["cameras"]:
             if index not in allowed:
                 continue
             arc = filmed_arc(cameras, train, frame, centres[index], config)
-            if arc is None:
-                continue
-            key = (round(arc["yaws"][1] - arc["yaws"][0], 3), arc["cameras"])
-            if key > best_key:
-                best, best_key = (index, arc), key
-        if best is None:
-            stands.append({"area": area["name"], "camera": None, "eye_aligned": None, "arc": None})
-            continue
-        index, arc = best
-        stands.append(
-            {
-                "area": area["name"],
-                "camera": index,
-                "eye_aligned": centres[index].tolist(),
-                "arc": arc,
-            }
-        )
+            if arc is not None:
+                key = (round(arc["yaws"][1] - arc["yaws"][0], 3), arc["cameras"])
+                ranked.append((key, index, arc))
+        ranked.sort(key=lambda entry: entry[0], reverse=True)
+        candidates = []
+        for _, index, arc in ranked:
+            if len(candidates) == config.look_candidates:
+                break
+            gaps = [np.linalg.norm(centres[index, :2] - c["eye_aligned"][:2]) for c in candidates]
+            if all(gap >= MIN_CANDIDATE_GAP for gap in gaps):
+                candidates.append(
+                    {"camera": index, "eye_aligned": centres[index].tolist(), "arc": arc}
+                )
+        stands.append({"area": area["name"], "candidates": candidates})
     return stands
 
 
@@ -497,13 +506,15 @@ def filmed_arc(cameras, train: list[int], frame: SceneFrame, eye_aligned, config
     }
 
 
-def _checked_arc(model, frame: SceneFrame, eye, arc: dict, config: TourConfig):
+def _checked_arc(model, frame: SceneFrame, eye, arc: dict, config: TourConfig) -> dict:
     """The longest part of ``arc`` whose views pass the checks, before anything is rendered.
 
     Each 5° view (320 × 180) must have at most ``max_unrendered`` pixels with alpha < HOLE_ALPHA
     and at most ``max_unmeasured`` rendered pixels that no capture camera saw from a
-    nearby direction (filled Gaussians count as unmeasured). Returns ``((first, last),
-    pitch, scores)`` in radians, or None when less than ``min_look_deg`` passes.
+    nearby direction (filled Gaussians count as unmeasured). Returns ``{"sweep": (first,
+    last) in radians, or None when less than min_look_deg passes; "pitch"; "scores" (per
+    view); "summary"}``, the summary giving the longest passing sweep and the median
+    shares, to show why an area was skipped.
     """
     low, high = arc["yaws"]
     pitch = math.radians(arc["pitch_deg"])
@@ -530,6 +541,12 @@ def _checked_arc(model, frame: SceneFrame, eye, arc: dict, config: TourConfig):
         run = run + 1 if ok else 0
         if run > best:
             best, best_first = run, j - run + 1
-    if best == 0 or 5 * (best - 1) < config.min_look_deg:
-        return None
-    return (yaws[best_first], yaws[best_first + best - 1]), pitch, scores
+    summary = {
+        "passing_deg": 5 * (best - 1) if best else 0,
+        "unmeasured_median": float(np.median([s["unmeasured"] for s in scores])),
+        "unrendered_median": float(np.median([s["unrendered"] for s in scores])),
+    }
+    sweep = None
+    if best and 5 * (best - 1) >= config.min_look_deg:
+        sweep = (yaws[best_first], yaws[best_first + best - 1])
+    return {"sweep": sweep, "pitch": pitch, "scores": scores, "summary": summary}

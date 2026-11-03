@@ -19,7 +19,14 @@ from spacegen.scene_frame import SceneFrame, estimate_frame, find_areas, run_fra
 from spacegen.sfm import Solution
 from spacegen.splat.train import needle_penalty, photometric_l1
 from spacegen.support import fibonacci_directions
-from spacegen.tour import WalkPath, filmed_arc, framing_distance, orbit_eye, scene_model
+from spacegen.tour import (
+    WalkPath,
+    filmed_arc,
+    filmed_standing_points,
+    framing_distance,
+    orbit_eye,
+    scene_model,
+)
 
 
 def test_look_at_points_the_camera_at_the_target():
@@ -392,6 +399,30 @@ def test_walk_path_turns_slowly_on_the_spot_and_does_not_stare_at_the_floor():
     # Looking straight down, the view keeps the last real heading (back along −x).
     assert views[-1, 0] / np.linalg.norm(views[-1, :2]) < -0.95
     assert np.allclose(np.linalg.inv(walk.pose(walk.duration))[:3, 3], [0, 0, 1], atol=0.05)
+
+
+def test_look_around_candidates_are_ranked_by_arc_and_spaced_apart():
+    k = np.array([[300.0, 0, 159.5], [0, 300.0, 119.5], [0, 0, 1]])
+    rng = np.random.default_rng(1)
+    cameras = []
+    # Spot A films 0–150°, spot B (1 camera height away) 0–90°, both from tight clusters.
+    for centre, widest in (((0.0, 0.0), 150), ((1.0, 0.0), 90)):
+        for number in range(30):
+            position = np.r_[np.asarray(centre) + rng.normal(0, 0.03, 2), 1.0]
+            yaw = math.radians(widest * number / 29)
+            direction = np.r_[math.cos(yaw), math.sin(yaw), -0.2]
+            cameras.append(Camera("c", 320, 240, k, look_at(position, position + direction)))
+    frame = SceneFrame(
+        np.eye(3), np.zeros(3), 1.0, True, [{"name": "Area 1", "cameras": list(range(60))}]
+    )
+    (stand,) = filmed_standing_points(frame, cameras, list(range(60)), TourConfig())
+    candidates = stand["candidates"]
+    assert len(candidates) == 2  # one per spot: neighbours of a pick are skipped
+    assert candidates[0]["camera"] < 30 and candidates[1]["camera"] >= 30
+    first, second = (c["arc"]["yaws"][1] - c["arc"]["yaws"][0] for c in candidates)
+    assert first > second
+    gap = np.linalg.norm(np.subtract(candidates[0]["eye_aligned"], candidates[1]["eye_aligned"]))
+    assert gap > 0.25
 
 
 def test_in_between_view_is_halfway_in_position_and_turn():
