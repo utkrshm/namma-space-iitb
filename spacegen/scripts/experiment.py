@@ -6,8 +6,8 @@
 ``train`` reuses RUN's frames, cameras (with re-sliced extra frames), depth and MVS, and
 writes ``RUN/exp/NAME/splat``; the configuration is RUN's ``config.json`` with ``steps``
 (``refine_stop`` scaled with it) and the overrides applied. ``compare`` prints held-out
-means and, per frame, the PSNR change against BASE (same cameras and held-out frames, or
-it refuses).
+means (of the metrics all runs have) and, per frame, the PSNR change against BASE (same
+cameras and held-out frames, or it refuses).
 """
 
 import argparse
@@ -49,12 +49,14 @@ def held_out(run: Path, name: str) -> dict:
 def compare(run: Path, base: str, names: list[str]) -> None:
     reference = held_out(run, base)
     frames = {r["name"]: r for r in reference["frames"]}
-    print(f"{'run':>20} " + " ".join(f"{k:>8}" for k in reference["mean"]))
-    for name in [base, *names]:
-        report = held_out(run, name)
+    reports = {name: held_out(run, name) for name in [base, *names]}
+    # Only the metrics every run has (older runs lack psnr_nb).
+    keys = [k for k in reference["mean"] if all(k in r["mean"] for r in reports.values())]
+    print(f"{'run':>20} " + " ".join(f"{k:>8}" for k in keys))
+    for name, report in reports.items():
         if {r["name"] for r in report["frames"]} != set(frames):
             sys.exit(f"{name}: different held-out frames from {base}; not comparable")
-        print(f"{name:>20} " + " ".join(f"{v:8.3f}" for v in report["mean"].values()))
+        print(f"{name:>20} " + " ".join(f"{report['mean'][k]:8.3f}" for k in keys))
     for name in names:
         delta = {
             r["name"]: r["psnr"] - frames[r["name"]]["psnr"] for r in held_out(run, name)["frames"]

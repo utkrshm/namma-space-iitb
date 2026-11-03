@@ -199,8 +199,10 @@ class Images:
         jobs = [(i, level) for level in sorted(levels) for i in chosen]
         with ThreadPoolExecutor(workers) as pool:
             loaded = pool.map(lambda job: read_rgb(paths[job[0]], long_side, job[1]), jobs)
+            pin = torch.cuda.is_available()  # pinned memory needs CUDA
             for job, image in zip(jobs, loaded, strict=True):
-                self.images[job] = torch.from_numpy(image).pin_memory()
+                tensor = torch.from_numpy(image)
+                self.images[job] = tensor.pin_memory() if pin else tensor
 
     def get(self, index: int, level: int, device) -> torch.Tensor:
         return self.images[index, level].to(device, non_blocking=True).float().div_(255)
@@ -478,8 +480,25 @@ def lpips_vgg(a: torch.Tensor, b: torch.Tensor) -> float:
 
 
 @torch.no_grad()
-def evaluate(model, cameras, images, indices, corrections, config, output: Path, name: str, train):
-    """Per-view metrics at full training resolution, plus side-by-side previews."""
+def evaluate(
+    model,
+    cameras,
+    images,
+    indices,
+    corrections,
+    config,
+    output: Path,
+    name: str,
+    train,
+    exposure=None,
+):
+    """Per-view metrics at full training resolution, plus side-by-side previews.
+
+    Held-out views get ``psnr`` (identity colour map: the video's average exposure),
+    ``psnr_cc`` (an affine colour map fitted to the view itself) and, with ``exposure``
+    (`neighbour_exposure`), ``psnr_nb``: the colour map blended from the training
+    cameras near the view, as tours render it.
+    """
     device = model.device
     directory = output / "evaluation" / name
     directory.mkdir(parents=True, exist_ok=True)
@@ -495,20 +514,27 @@ def evaluate(model, cameras, images, indices, corrections, config, output: Path,
         rgb, _, alpha, _ = render(
             model, torch.linalg.inv(camera_to_world), k, width, height, mode=config.rasterize_mode
         )
+        neighbours = None
+        if exposure is not None and not train:
+            from ..exposure import apply_residual
+
+            residual = exposure.residual(camera.world_to_camera).to(device)
+            neighbours = apply_residual(residual, rgb).clamp(0, 1)
         rgb = rgb.clamp(0, 1)
         if train and config.appearance:
             rgb = corrections.apply_colour(index, rgb).clamp(0, 1)
         corrected = fit_colour(rgb, target)
-        rows.append(
-            {
-                "name": camera.name,
-                "psnr": psnr(rgb, target),
-                "psnr_cc": psnr(corrected, target),
-                "ssim": float(ssim(rgb, target)),
-                "lpips": lpips_vgg(rgb, target),
-                "coverage": float((alpha > 0.5).float().mean()),
-            }
-        )
+        row = {
+            "name": camera.name,
+            "psnr": psnr(rgb, target),
+            "psnr_cc": psnr(corrected, target),
+            "ssim": float(ssim(rgb, target)),
+            "lpips": lpips_vgg(rgb, target),
+            "coverage": float((alpha > 0.5).float().mean()),
+        }
+        if neighbours is not None:
+            row["psnr_nb"] = psnr(neighbours, target)
+        rows.append(row)
         if number % max(1, len(indices) // 12) == 0:
             import cv2
 
@@ -525,6 +551,31 @@ def evaluate(model, cameras, images, indices, corrections, config, output: Path,
     }
     write_json(directory / "metrics.json", report)
     return report
+
+
+def neighbour_exposure(cameras, corrections, train_indices, camera_height):
+    """`spacegen.exposure.CaptureExposure` of the training cameras' current colour maps
+    (``camera_height`` in world units), or None without a height."""
+    from ..exposure import CaptureExposure
+
+    if camera_height is None or not train_indices:
+        return None
+    chosen = [cameras[i] for i in train_indices]
+    centres = np.stack([c.centre for c in chosen])
+    forwards = np.stack([c.camera_to_world[:3, 2] for c in chosen])
+    maps = corrections.colour_parameter.detach()[list(train_indices)]
+    return CaptureExposure(centres, forwards, maps, camera_height)
+
+
+def _camera_height(cameras, points) -> float | None:
+    """`scene_frame.estimate_frame`'s camera height, or None when it cannot be found."""
+    from ..scene_frame import estimate_frame
+
+    try:
+        height = float(estimate_frame(cameras, points).camera_height)
+    except (ValueError, IndexError, np.linalg.LinAlgError):
+        return None
+    return height if np.isfinite(height) and height > 0 else None
 
 
 def train_splat(
@@ -564,6 +615,8 @@ def train_splat(
     )
     radius = scene_radius([cameras[i] for i in train_indices])
     extent = scene_extent([cameras[i] for i in train_indices], points)
+    # The scale of `neighbour_exposure` for held-out ``psnr_nb``.
+    camera_height = _camera_height([cameras[i] for i in train_indices], points)
     if isinstance(initial, (str, Path)):
         model = load_ply(initial, device)
     elif isinstance(initial, GaussianModel):
@@ -789,6 +842,7 @@ def train_splat(
                 output,
                 f"{step:06d}",
                 False,
+                neighbour_exposure(cameras, corrections, train_indices, camera_height),
             )
             log(f"held-out at {step}: {report['mean']}")
 
@@ -799,8 +853,11 @@ def train_splat(
     train_report = evaluate(
         model, cameras, images, train_indices[::every], corrections, config, output, "train", True
     )
+    exposure = neighbour_exposure(cameras, corrections, train_indices, camera_height)
     val_report = (
-        evaluate(model, cameras, images, val_indices, corrections, config, output, "val", False)
+        evaluate(
+            model, cameras, images, val_indices, corrections, config, output, "val", False, exposure
+        )
         if val_indices
         else None
     )

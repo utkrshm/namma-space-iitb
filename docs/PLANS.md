@@ -14,6 +14,27 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 04-11-26 04:47:45 IST — spacegen: held-out PSNR with the neighbours' exposure (`psnr_nb`)
+
+- **Status:** adopted.
+- **Decision:** `splat.train.evaluate` adds `psnr_nb` for held-out views: PSNR after the
+  colour map that `spacegen.exposure.CaptureExposure` blends from the training cameras
+  near the view (radius 0.15 camera heights, cone 10°, as the tour renders). Camera
+  heights come from `scene_frame.estimate_frame` on the training cameras and points.
+  If that fails, the metric is left out. `psnr` (identity map) and `psnr_cc` (affine
+  fit to the view itself) stay as they are, so earlier runs remain comparable on them.
+  `scripts/experiment.py compare` prints the metrics both runs have.
+- **Rationale and trade-offs:** `psnr` scores renders at the video's average exposure,
+  which tours no longer show. `psnr_cc` fits each held-out image itself, an upper bound
+  no render can reach. `psnr_nb` uses only training cameras, so it is a fair held-out
+  score of what the videos show: on the CPU check, vyas_room 26.15 against `psnr` 22.06.
+  An A/B change that only shifts exposure handling can still move it, so compare
+  geometry changes on all three.
+- **Affected components:** `splat.train` (`evaluate`, `train_splat`), `scripts/experiment.py`,
+  ARCHITECTURE.
+- **Completion criteria:** CPU test of the metric on a scene with a darkened training
+  view; the GPU runs report it.
+
 ## 04-11-26 03:22:34 IST — spacegen: tours and demos render with the capture's own exposure near each view
 
 - **Status:** adopted (render-only; CPU-checked on held-out views and by eye).
