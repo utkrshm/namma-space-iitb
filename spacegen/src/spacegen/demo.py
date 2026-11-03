@@ -28,7 +28,7 @@ from .contracts import Camera, look_at
 from .scene_frame import run_frame
 from .splat.model import load_ply, render_camera, write_json
 from .splat.train import load_cameras
-from .tour import WalkPath, Writer, cutaway, ease, label, measured_support
+from .tour import WalkPath, Writer, cutaway, ease, label, measured_support, scene_model
 
 
 def first_seen(means: torch.Tensor, cameras: list[Camera], max_depth: float) -> torch.Tensor:
@@ -99,8 +99,8 @@ def render_demo(run: Path, config: DemoConfig, device: str, log) -> dict:
     run = Path(run)
     output = run / "demo"
     output.mkdir(exist_ok=True)
-    filled = (run / "fill" / "scene.ply").exists()
-    model = load_ply(run / ("fill" if filled else "splat") / "scene.ply", device)
+    path, filled = scene_model(run, log)
+    model = load_ply(path, device)
     cameras, splits = load_cameras(run / "splat" / "cameras.json")
     train = [c for c, split in zip(cameras, splits, strict=True) if split == "train"]
     if "support" not in model.extras:

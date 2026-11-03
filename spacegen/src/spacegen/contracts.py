@@ -32,6 +32,7 @@ Stage directories (under one run directory ``<out>/``)
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -115,3 +116,19 @@ def look_at(eye: np.ndarray, target: np.ndarray, up=(0.0, 0.0, 1.0)) -> np.ndarr
     camera_to_world[:3, :3] = np.column_stack((right, down, forward))
     camera_to_world[:3, 3] = eye
     return np.linalg.inv(camera_to_world)
+
+
+def file_stamp(path) -> dict:
+    """Size and modification time of ``path``: which input a cached output was made from
+    (stored as ``made_from``). Survives ``mv``; a plain copy changes it."""
+    stat = Path(path).stat()
+    return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def made_from(record: dict, cached, source) -> bool:
+    """Whether the cached output ``cached``, whose JSON is ``record``, still belongs to
+    ``source``. Outputs from before ``made_from`` existed count when newer than the source."""
+    stamp = record.get("made_from")
+    if stamp is None:
+        return Path(cached).stat().st_mtime_ns >= Path(source).stat().st_mtime_ns
+    return stamp == file_stamp(source)

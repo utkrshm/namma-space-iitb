@@ -26,8 +26,10 @@ video between two consecutive training cameras. A segment is weak when:
 
 Outputs (``<out>/``)
 --------------------
-- ``audit.json``: ``summary``, ``held_out`` (per view), ``segments`` (per segment: times,
-  turn, checks, ``reasons``), ``probes`` (mean checks per probe kind, and the worst views);
+- ``audit.json``: ``summary``, ``made_from`` (`contracts.file_stamp` of the model; a
+  changed model is audited again), ``held_out`` (per view), ``segments`` (per segment:
+  times, turn, checks, ``reasons``), ``probes`` (mean checks per probe kind, and the worst
+  views);
 - ``sheet.jpg``: the worst held-out views (truth | render | error) and the worst in-between
   and probe views (render | unmeasured in red);
 - ``timeline.png``: the checks along the video, with weak segments shaded.
@@ -50,7 +52,7 @@ import torch
 from scipy.spatial.transform import Rotation, Slerp
 
 from .config import AuditConfig
-from .contracts import Camera
+from .contracts import Camera, file_stamp, made_from
 from .depth import read_rgb
 from .scene_frame import SceneFrame, estimate_frame
 from .splat import load_cameras, load_ply, render_camera
@@ -146,7 +148,9 @@ def _image_path(run: Path, name: str) -> Path:
 def _tile(images: list[np.ndarray], caption: str, height: int = 320) -> np.ndarray:
     """Images side by side at ``height`` under a caption band."""
     resized = [
-        cv2.resize(i, (round(i.shape[1] * height / i.shape[0]), height), cv2.INTER_AREA)
+        cv2.resize(
+            i, (round(i.shape[1] * height / i.shape[0]), height), interpolation=cv2.INTER_AREA
+        )
         for i in images
     ]
     tile = np.hstack(resized)
@@ -209,8 +213,12 @@ def audit_model(run, model_dir, out, config: AuditConfig, device="cuda:0", log=p
     """Audit ``<model_dir>/scene.ply`` (with ``cameras.json``); writes ``<out>/``."""
     run, model_dir, out = Path(run), Path(model_dir), Path(out)
     if (out / "audit.json").exists():
-        return json.loads((out / "audit.json").read_text())["summary"]
+        record = json.loads((out / "audit.json").read_text())
+        if made_from(record, out / "audit.json", model_dir / "scene.ply"):
+            return record["summary"]
+        log("audit: the model changed since the last audit; auditing it again")
     out.mkdir(parents=True, exist_ok=True)
+    stamp = file_stamp(model_dir / "scene.ply")
 
     model = load_ply(model_dir / "scene.ply", device)
     cameras, splits = load_cameras(model_dir / "cameras.json")
@@ -382,7 +390,13 @@ def audit_model(run, model_dir, out, config: AuditConfig, device="cuda:0", log=p
     }
     write_json(
         out / "audit.json",
-        {"summary": summary, "held_out": held_out, "segments": segments, "probes": probes},
+        {
+            "summary": summary,
+            "made_from": stamp,
+            "held_out": held_out,
+            "segments": segments,
+            "probes": probes,
+        },
     )
     log(f"audit: {json.dumps(summary)}")
     return summary

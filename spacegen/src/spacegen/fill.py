@@ -28,7 +28,8 @@ G4Splat 2025 and GSFix3D 2025):
    Densification is off, so the per-Gaussian flags stay aligned.
 
 Output (``<run>/fill/``): ``scene.ply`` (with ``filled`` and ``support``), ``fill.json``
-(per probe: hole share before and after, generated share), ``probes/`` (render | holes |
+(``made_from``: `contracts.file_stamp` of ``splat/scene.ply``; per probe: hole share
+before and after, generated share), ``probes/`` (render | holes |
 inpainted for each probe) and ``scene_frame.json`` in the run directory.
 """
 
@@ -45,7 +46,7 @@ import torch
 import torch.nn.functional as F
 
 from .config import FillConfig, PipelineConfig
-from .contracts import Camera, look_at
+from .contracts import Camera, file_stamp, look_at, made_from
 from .depth import predict_depth
 from .scene_frame import SceneFrame, run_frame
 from .splat.model import SH_C0, GaussianModel, load_ply, render, render_camera, save_ply, write_json
@@ -225,12 +226,17 @@ def measured_share(model: GaussianModel, camera: Camera, config: FillConfig) -> 
 def fill_gaps(run: Path, config: PipelineConfig, device: str, log) -> dict:
     fill = config.fill
     output = Path(run) / "fill"
+    source = Path(run) / "splat" / "scene.ply"
     if (output / "fill.json").exists() and (output / "scene.ply").exists():
-        return json.loads((output / "fill.json").read_text())
+        report = json.loads((output / "fill.json").read_text())
+        if made_from(report, output / "fill.json", source):
+            return report
+        log("fill: the splat changed since the last fill; filling it again")
     (output / "probes").mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
+    stamp = file_stamp(source)
 
-    model = load_ply(Path(run) / "splat" / "scene.ply", device)
+    model = load_ply(source, device)
     cameras, splits = load_cameras(Path(run) / "splat" / "cameras.json")
     train = [i for i, split in enumerate(splits) if split == "train"]
     if "support" not in model.extras:
@@ -332,6 +338,7 @@ def fill_gaps(run: Path, config: PipelineConfig, device: str, log) -> dict:
         return float(np.mean([r[key] for r in rows]))
 
     report = {
+        "made_from": stamp,
         "standing_points": stands,
         "probes": len(probes),
         "inpainted_probes": len(pseudo),

@@ -2,7 +2,9 @@
 audit → fill → tour → demo.
 
 Every stage writes into its own folder under the run directory and is skipped when its
-output already exists, so an interrupted run resumes where it stopped. ``report.json``
+output already exists, so an interrupted run resumes where it stopped. Audit and fill are
+redone when ``splat/scene.ply`` changed since they ran (``made_from``), and tour and demo
+then render the splat, not a filled model from an older splat. ``report.json``
 collects each stage's summary and the quality checks.
 """
 

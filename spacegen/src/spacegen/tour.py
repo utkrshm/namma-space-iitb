@@ -17,6 +17,7 @@ yuv420p) and ``tour.json`` (sections, frame counts and the quality checks of `Re
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 
@@ -27,7 +28,7 @@ import torch
 from scipy.ndimage import gaussian_filter1d
 
 from .config import DemoConfig, TourConfig
-from .contracts import Camera, look_at
+from .contracts import Camera, look_at, made_from
 from .scene_frame import SceneFrame, run_frame
 from .splat.model import GaussianModel, load_ply, render_camera, write_json
 from .splat.train import load_cameras
@@ -214,12 +215,24 @@ class WalkPath:
         return look_at(position, position + look / np.linalg.norm(look), self.up)
 
 
+def scene_model(run: Path, log=print) -> tuple[Path, bool]:
+    """``(path, filled)``: ``fill/scene.ply`` when it was made from the current splat, else
+    ``splat/scene.ply``."""
+    splat = run / "splat" / "scene.ply"
+    record = run / "fill" / "fill.json"
+    if (run / "fill" / "scene.ply").exists() and record.exists():
+        if made_from(json.loads(record.read_text()), record, splat):
+            return run / "fill" / "scene.ply", True
+        log("the filled model is from an older splat; rendering the splat itself")
+    return splat, False
+
+
 def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
     run = Path(run)
     output = run / "tour"
     output.mkdir(exist_ok=True)
-    filled = (run / "fill" / "scene.ply").exists()
-    model = load_ply(run / ("fill" if filled else "splat") / "scene.ply", device)
+    path, filled = scene_model(run, log)
+    model = load_ply(path, device)
     cameras, splits = load_cameras(run / "splat" / "cameras.json")
     if "support" not in model.extras:
         from .support import compute_support

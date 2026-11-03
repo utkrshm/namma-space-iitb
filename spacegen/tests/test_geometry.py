@@ -10,7 +10,7 @@ import torch
 
 from spacegen.audit import between, turn_deg
 from spacegen.config import PipelineConfig, TourConfig
-from spacegen.contracts import Camera, look_at
+from spacegen.contracts import Camera, file_stamp, look_at, made_from
 from spacegen.depth import depth_normals, fit_inverse_depth, near_inverse_depth
 from spacegen.fill import align_depth, probe_camera, standing_points
 from spacegen.partition import balanced_split
@@ -19,7 +19,7 @@ from spacegen.scene_frame import SceneFrame, estimate_frame, find_areas, run_fra
 from spacegen.sfm import Solution
 from spacegen.splat.train import needle_penalty, photometric_l1
 from spacegen.support import fibonacci_directions
-from spacegen.tour import WalkPath, filmed_arc
+from spacegen.tour import WalkPath, filmed_arc, scene_model
 
 
 def test_look_at_points_the_camera_at_the_target():
@@ -281,6 +281,37 @@ def test_filmed_arc_follows_the_cameras_near_the_standing_point():
     assert 5 <= low <= 25 and 95 <= high <= 115
     assert arc["pitch_deg"] == pytest.approx(-25, abs=0.5)
     assert arc["cameras"] == 30
+
+
+def test_cached_outputs_follow_the_splat_they_were_made_from(tmp_path):
+    import os
+
+    (tmp_path / "splat").mkdir()
+    (tmp_path / "fill").mkdir()
+    splat = tmp_path / "splat" / "scene.ply"
+    splat.write_bytes(b"first model")
+    (tmp_path / "fill" / "scene.ply").write_bytes(b"filled")
+    record = tmp_path / "fill" / "fill.json"
+    record.write_text(json.dumps({"made_from": file_stamp(splat)}))
+    assert scene_model(tmp_path) == (tmp_path / "fill" / "scene.ply", True)
+
+    # Moving the run keeps the stamp; retraining (a new file) breaks it.
+    moved = tmp_path.parent / (tmp_path.name + "_moved")
+    tmp_path.rename(moved)
+    assert scene_model(moved)[1]
+    splat = moved / "splat" / "scene.ply"
+    splat.unlink()
+    splat.write_bytes(b"second model, retrained")
+    assert scene_model(moved, log=lambda _: None) == (splat, False)
+
+    # Records from before stamps existed count when newer than the splat.
+    legacy = moved / "audit.json"
+    legacy.write_text("{}")
+    os.utime(splat, ns=(1, 10**18))
+    os.utime(legacy, ns=(1, 2 * 10**18))
+    assert made_from({}, legacy, splat)
+    os.utime(legacy, ns=(1, 10**18 - 1))
+    assert not made_from({}, legacy, splat)
 
 
 def test_walk_path_turns_slowly_on_the_spot_and_does_not_stare_at_the_floor():

@@ -14,6 +14,24 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 04-11-26 00:53:13 IST — spacegen: cached audit and fill outputs remember which splat they came from
+
+- **Status:** adopted (CPU-tested).
+- **Decision:** `audit.json` and `fill/fill.json` record `made_from` (size and
+  modification time of `splat/scene.ply`). The pipeline reuses them only when the splat
+  still matches; tour and demo render `fill/scene.ply` only then, else the splat itself
+  (with a log line). Outputs written before this change count as current when they are
+  newer than the splat.
+- **Rationale and trade-offs:** each stage was skipped whenever its output existed, so
+  after a retrain the old audit and the old filled model were reused and the tour showed
+  the previous model; the retrain scripts had to move those folders aside by hand
+  (`outputs/spacegen/on_gpu.sh`). Size + mtime is cheap and survives `mv`; a plain copy
+  changes the mtime and only costs a redo.
+- **Affected components:** `spacegen.contracts` (`file_stamp`, `made_from`),
+  `spacegen.audit`, `spacegen.fill`, `spacegen.tour` (`scene_model`), `spacegen.demo`.
+- **Completion criteria:** CPU test: a changed splat invalidates the record, an
+  unchanged or moved one does not, a legacy record follows the mtime rule.
+
 ## 04-11-26 00:52:00 IST — spacegen: walkthrough and highlight paths paced by turning, not only distance
 
 - **Status:** adopted (CPU-tested; videos to be re-rendered when the GPU is back).

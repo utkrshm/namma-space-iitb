@@ -26,7 +26,9 @@ report.json, log.txt
 ```
 
 `spacegen.pipeline.run` calls the stages in order. A stage whose output exists is
-skipped, so runs resume.
+skipped, so runs resume. `audit.json` and `fill/fill.json` carry `made_from` (size and
+mtime of `splat/scene.ply`, `contracts.file_stamp`): after a retrain they are redone, and
+tour and demo render `fill/scene.ply` only when it matches the current splat.
 
 ## Conventions
 
