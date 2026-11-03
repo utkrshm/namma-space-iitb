@@ -16,6 +16,7 @@ from .sfm import Solution, load_solution, solve_cameras
 from .splat import GaussianModel, load_ply, render, save_ply, train_splat
 from .support import compute_support, support_map
 from .tour import render_tour
+from .transients import find_transients
 
 __all__ = [
     "STAGES",
@@ -31,6 +32,7 @@ __all__ = [
     "estimate_frame",
     "fill_gaps",
     "find_reflectors",
+    "find_transients",
     "gap_seeds",
     "ingest",
     "load_ply",

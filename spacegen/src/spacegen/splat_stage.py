@@ -46,6 +46,12 @@ def build_splat(solution: Solution, output: Path, config: PipelineConfig, depth_
         from .planar import planar_priors
 
         planar_priors(solution, train, depth_dir, device, log)
+    transients = config.splat.transient_views > 0 and depth_dir is not None and not finished
+    if transients:
+        from .transients import find_transients
+
+        find_transients(solution, depth_dir, train, config.splat, device, log)
+    sfm_points = len(solution.points)
     if (
         (
             config.splat.depth_seed_points
@@ -68,6 +74,10 @@ def build_splat(solution: Solution, output: Path, config: PipelineConfig, depth_
             gap_count=config.splat.gap_seed_points,
             device=device,
         )
+        if transients:
+            from .transients import drop_flagged_seeds
+
+            solution = drop_flagged_seeds(solution, sfm_points, depth_dir, log)
     reflectors = None
     if config.splat.reflections and not finished:
         from .reflectors import find_reflectors

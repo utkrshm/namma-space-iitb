@@ -219,9 +219,12 @@ class Priors:
       a fit, only MVS pixels have a value and the rest are 0;
     - ``measured``: a bool mask of the MVS pixels, or None;
     - ``planar``: a bool mask of the plane pixels, or None.
+
+    With ``masks`` (`spacegen.transients.TransientMasks`), flagged pixels have no target.
     """
 
-    def __init__(self, folder: Path, paths: list[Path], planar: bool = False):
+    def __init__(self, folder: Path, paths: list[Path], planar: bool = False, masks=None):
+        self.masks = masks
         self.paths = [Path(folder) / (p.stem + ".npy") for p in paths]
         self.mvs_paths = [Path(folder) / "mvs" / (p.stem + ".npy") for p in paths]
         self.metric_paths = [Path(folder) / "metric" / (p.stem + ".npy") for p in paths]
@@ -268,6 +271,11 @@ class Priors:
         if plane_inverse is not None and metric is not None and (plane_inverse > 0).any():
             planar = plane_inverse > 0
             metric = torch.where(planar, plane_inverse, metric)
+        hidden = None if self.masks is None else self.masks.get(index, device)
+        if hidden is not None and metric is not None:
+            metric = torch.where(hidden, 0.0, metric)
+            measured = None if measured is None else measured & ~hidden
+            planar = None if planar is None else planar & ~hidden
         return mono, metric, measured, planar
 
 
@@ -387,6 +395,17 @@ def photometric_l1(rgb: torch.Tensor, target: torch.Tensor, saturation_level: fl
     error = rgb - target
     clipped = target >= saturation_level
     return torch.where(clipped, (-error).clamp_min(0), error.abs()).mean()
+
+
+def hide_flagged(rgb: torch.Tensor, target: torch.Tensor, hidden: torch.Tensor | None):
+    """``rgb`` [H,W,3] with the capture's own colour on the pixels flagged in ``hidden``
+    (a `spacegen.transients` mask at any size, or None): there the losses see no error and
+    send no gradient, and the view's hard-view error leaves them out."""
+    if hidden is None:
+        return rgb
+    size = rgb.shape[:2]
+    hidden = F.interpolate(hidden[None, None].float(), size=size, mode="nearest")[0, 0] > 0
+    return torch.where(hidden[..., None], target, rgb)
 
 
 def split_indices(count: int, holdout_every: int) -> tuple[list[int], list[int]]:
@@ -562,8 +581,13 @@ def train_splat(
             torch.full((model.count, len(reflectors["planes"])), INITIAL_LOGIT, device=device)
         )
     corrections = Corrections(len(cameras), config.bilateral_grid or None).to(device)
+    masks = None
+    if depth_dir and config.transient_views > 0:
+        from ..transients import TransientMasks
+
+        masks = TransientMasks(depth_dir, image_paths)
     priors = (
-        Priors(depth_dir, image_paths, config.planar_prior)
+        Priors(depth_dir, image_paths, config.planar_prior, masks)
         if depth_dir and config.depth_prior_weight > 0
         else None
     )
@@ -672,6 +696,8 @@ def train_splat(
             rgb = rgb + (1 - alpha)[..., None] * torch.rand(3, device=device)
         if config.appearance:
             rgb = corrections.apply_colour(index, rgb)
+        if masks is not None:
+            rgb = hide_flagged(rgb, target, masks.get(index, device))
 
         l1 = photometric_l1(rgb, target, config.saturation_level)
         view_error[index] = l1.detach()

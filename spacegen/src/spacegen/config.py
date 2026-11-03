@@ -220,6 +220,14 @@ class SplatConfig:
     # A door seen in 3 of 344 frames otherwise gets 1% of the steps and never fills in.
     hard_view_share: float = 0.3
     screen_keep_depth: float = 0.1
+    # Free-space check of the depth targets (`spacegen.transients`): a pixel whose depth
+    # point at least ``transient_views`` training views see through (their own surface
+    # beyond ``transient_ratio`` × its depth), and at least ``transient_share`` of the views
+    # that see it, is left out of the photometric and depth losses: moving content such
+    # as a door that swings shut, or a wrong depth. 0 disables; off until its A/B test.
+    transient_views: int = 0
+    transient_share: float = 0.8
+    transient_ratio: float = 1.5
     # Bookkeeping.
     log_every: int = 200
     evaluate_every: int = 10_000
