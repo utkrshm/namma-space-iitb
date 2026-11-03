@@ -2,7 +2,7 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `04-11-26 00:50:00 IST`
+**Last updated:** `04-11-26 01:16:00 IST`
 
 ## Current Focus
 
@@ -12,7 +12,7 @@ full power-off; see `outputs/automation/GPU_DOWN.md`). Everything below that nee
 GPU is queued to run on its own when it returns (`outputs/automation/IMPROVE_LOOP.md`).
 
 Done since, CPU-tested only (GPU tests and re-renders not run), see [PLANS.md](PLANS.md)
-03-11-26 23:25 to 04-11-26 00:53:
+03-11-26 23:25 to 04-11-26 01:12:
 - code-review fixes: area numbering across stages, a hang on videos over ~15 min,
   mirrors no longer delete the room behind their wall, mid-run training resume, the
   fill depth double division, reflector cache and frame counts;
@@ -20,6 +20,11 @@ Done since, CPU-tested only (GPU tests and re-renders not run), see [PLANS.md](P
   exact half-resolution reflection canvas; decoding with the frame's colour range;
 - walkthrough and highlight clips paced by turning as well as distance (at most 45°/s,
   was up to 700°/s), tilt at most 35° down;
+- tour overview and demo build-up framed on the kept geometry (m-block's orbit sat above
+  its far walls); look-arounds try up to 5 standing points per area (skipped in 6 of 9
+  areas before); `scripts/rerender.py` re-renders finished runs' tours and demos;
+- audit and fill redone after a retrain (`made_from`); atomic writes for every file a
+  resumed run reuses; A/B runs scale `refine_stop` with their steps;
 - two options, off until their A/B tests run: a plane prior for walls, floors and
   ceilings (`splat.planar_prior`) and a per-image bilateral colour grid
   (`splat.bilateral_grid`).
