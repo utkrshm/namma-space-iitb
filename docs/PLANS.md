@@ -14,6 +14,27 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 02-11-26 00:50:00 IST — spacegen: find the floor when the video looks straight down
+
+- **Status:** adopted.
+- **Decision:** `estimate_frame` searches for the floor plane around two guesses of up:
+  the cameras' mean image-up (−y, as before) and the direction most perpendicular to all
+  camera x axes (people rarely roll the phone). It keeps the plane with more inliers. A
+  floor is accepted at 3% of the low points (was 5%), still with at least 200 inliers.
+- **Rationale and trade-offs:** `room_m_block` films the floor and beds from above for
+  its second half. A camera looking down has a horizontal image-up, so the mean image-up
+  leaned 68° from vertical and the floor (outside the 30° search window) was not found:
+  the tour orbit and walkthrough came out tilted, and the fill and reflector stages lost
+  their floor. The x-axis guess was 22° off, and the plane found from it was within 5° of
+  the up of the upright early frames. The beds hide most of the floor, so it holds only
+  5% of the low points; vyas_room, new_home and Coorg hold 26–93%, and both guesses give
+  the same plane there (within 0.2°). Keeping the mean image-up as a second guess covers
+  captures that switch between portrait and landscape, where x axes are not horizontal.
+- **Affected components:** `spacegen/src/spacegen/scene_frame.py`; runs re-do audit,
+  fill, tour and demo (the splat is unchanged, but its reflector search also needs the floor).
+- **Completion criteria:** a synthetic test with half the cameras looking straight down
+  recovers up within 1°; `room_m_block_v4` finds its floor and its tour is level.
+
 ## 01-11-26 14:45:00 IST — spacegen: why `new_home_v2` scores below `new_home` (v1)
 
 - **Status:** tested, 01-11-26 18:10 IST. 2 blocks of 524 (`new_home_v3`, finished from

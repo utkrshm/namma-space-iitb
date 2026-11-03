@@ -96,6 +96,26 @@ def test_scene_frame_recovers_up_floor_and_scale_in_any_gauge():
     assert len(frame.areas) == 2 and frame.areas[0]["cameras"][0] == 0
 
 
+def test_scene_frame_finds_the_floor_when_half_the_video_looks_straight_down():
+    """A capture that ends filming the floor and bed from above (room_m_block). A camera
+    looking down has its image-up axis horizontal, so the cameras' mean image-up leans far
+    from vertical; their x axes stay horizontal and still give the right up."""
+    cameras, points = _room(3)
+    for number in range(30, 80):
+        position = cameras[number].centre
+        target = position + np.array([0.15, 0.0, -1.0])
+        k = cameras[number].intrinsics
+        cameras[number] = Camera(f"{number}", 320, 240, k, look_at(position, target))
+    angle = 0.4
+    rotation = np.array(
+        [[math.cos(angle), 0, math.sin(angle)], [0, 1, 0], [-math.sin(angle), 0, math.cos(angle)]]
+    )
+    cameras, points = _rotate(cameras, points, rotation, 2.0, np.array([1.0, 3.0, -2.0]))
+    frame = estimate_frame(cameras, points)
+    assert frame.floor_found
+    assert np.degrees(np.arccos(frame.up @ (rotation @ [0, 0, 1]))) < 1.0
+
+
 def test_scene_frame_round_trips_through_json(tmp_path):
     cameras, points = _room(1)
     frame = estimate_frame(cameras, points)

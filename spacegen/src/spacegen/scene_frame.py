@@ -4,10 +4,12 @@ SfM leaves the world in an arbitrary rotation and scale. Later stages need "up",
 floor and a physical length unit, so this module estimates:
 
 - **Up:** the normal of the dominant plane among the SfM points below the cameras
-  (RANSAC, normals within 30° of the cameras' mean up direction). When no floor plane is
-  found (a table-top capture), the cameras' mean up direction (−y in OpenCV axes) is
-  used. People hold phones upright on average, and tilts toward different view
-  directions cancel.
+  (RANSAC, normals within 30° of a guess of up). Two guesses are tried and the plane with
+  more inliers kept: the cameras' mean up direction (−y in OpenCV axes; people hold
+  phones upright on average) and the direction most perpendicular to all camera x axes
+  (people rarely roll the phone; this one stays right when much of the video looks
+  straight down at the floor). When no floor plane is found (a table-top capture), the
+  cameras' mean up direction is used.
 - **Floor height** (that plane) and **camera height:** the median camera height above the
   floor. Lengths downstream are in camera heights. For a handheld phone, one camera
   height ≈ 1.4–1.6 m.
@@ -102,23 +104,35 @@ def _ransac_plane(points: np.ndarray, prior_up: np.ndarray, threshold: float, rn
     return normal, float(centre @ normal), inliers
 
 
-def estimate_frame(cameras: list[Camera], points: np.ndarray, area_size: float = 2.5) -> SceneFrame:
+def _floor_plane(centres: np.ndarray, points: np.ndarray, prior_up: np.ndarray, scale: float):
+    """RANSAC floor among the points clearly below every camera's height band.
+    Returns (normal, offset, inlier count, candidate count)."""
     rng = np.random.default_rng(0)
-    camera_to_world = np.stack([c.camera_to_world for c in cameras])
-    centres = camera_to_world[:, :3, 3]
-    prior_up = -camera_to_world[:, :3, 1].mean(0)
-    prior_up /= np.linalg.norm(prior_up)
-
-    # Floor candidates: points clearly below every camera's height band.
-    spread = np.linalg.norm(centres - centres.mean(0), axis=1)
-    scale = float(np.median(spread)) + 1e-9
     heights = (points - centres.mean(0)) @ prior_up
     camera_heights = (centres - centres.mean(0)) @ prior_up
     below = points[heights < np.percentile(camera_heights, 5) - 0.3 * scale]
     if len(below) > 20000:
         below = below[rng.choice(len(below), 20000, replace=False)]
     normal, offset, inliers = _ransac_plane(below, prior_up, 0.02 * scale, rng)
-    floor_found = normal is not None and inliers.sum() >= max(200, 0.05 * len(below))
+    return normal, offset, int(inliers.sum()), len(below)
+
+
+def estimate_frame(cameras: list[Camera], points: np.ndarray, area_size: float = 2.5) -> SceneFrame:
+    camera_to_world = np.stack([c.camera_to_world for c in cameras])
+    centres = camera_to_world[:, :3, 3]
+    prior_up = -camera_to_world[:, :3, 1].mean(0)
+    prior_up /= np.linalg.norm(prior_up)
+    # Second guess: the direction most perpendicular to every camera's x axis. It stays
+    # right when much of the video looks straight down (image-up is then horizontal).
+    x_axes = camera_to_world[:, :3, 0]
+    _, vectors = np.linalg.eigh(x_axes.T @ x_axes)
+    level_up = vectors[:, 0] * (1.0 if vectors[:, 0] @ prior_up >= 0 else -1.0)
+
+    spread = np.linalg.norm(centres - centres.mean(0), axis=1)
+    scale = float(np.median(spread)) + 1e-9
+    planes = [_floor_plane(centres, points, guess, scale) for guess in (prior_up, level_up)]
+    normal, offset, inlier_count, candidates = max(planes, key=lambda plane: plane[2])
+    floor_found = normal is not None and inlier_count >= max(200, 0.03 * candidates)
     if floor_found:
         up = normal
         floor = offset

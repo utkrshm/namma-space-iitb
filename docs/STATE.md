@@ -2,7 +2,7 @@
 
 Timestamps use `DD-MM-YY HH:MM:SS IST`, with 24-hour time in Indian Standard Time (`Asia/Kolkata`, UTC+05:30). Keep this document as the current snapshot; retain decision history in [PLANS.md](PLANS.md).
 
-**Last updated:** `01-11-26 18:15:00 IST`
+**Last updated:** `03-11-26 16:22:00 IST`
 
 ## Current Focus
 
@@ -30,6 +30,8 @@ Full remakes (30k steps), all on Drive in "spacegen v4 — doors + mirror reflec
 | `vyas_room_v4` | 22.35 | 28.32 | 0.871 | 0.304 | v3: 22.30 / 28.06 / 0.867 / 0.307; mirror frames +1.6–1.8 dB, door frames +1.1–1.4 dB |
 | `new_home_v2` | 22.50 | 26.55 | 0.873 | 0.411 | v1: 23.30 / 26.93 / 0.877 / 0.413 (same 124 frames); 52 frames lose > 1 dB, 19 gain > 1 dB |
 | `coorg` | 21.30 | 25.68 | 0.840 | 0.411 | no earlier `spacegen` build (the 29 Oct model used other cameras) |
+| `new_home_v3` (2 blocks) | 22.97 | 26.79 | 0.876 | 0.412 | splat zip only; see the regression note below |
+| `room_m_block_v4` | 20.80 | 27.20 | 0.845 | 0.306 | first build of `room_m_block.mp4`; single model, 1.5M Gaussians, no reflection layer |
 
 The `new_home` regression ([PLANS.md](PLANS.md), 01-11-26 14:45:00): the settings are
 not the cause (10k-step tests: this change's seeds, pruning guard, reflections and hard
@@ -38,6 +40,12 @@ is: 2 blocks instead of 3 score 22.97 / 26.79 against 22.50 / 26.55 (v1: 23.30 /
 and frames near block borders still lose up to 6 dB. Next: single-model training for
 captures that fit in GPU memory. GPU tests pass (01-11-26 18:05). Paused: the benchmark
 queue (`outputs/spacegen/queue`).
+
+`room_m_block` films the floor and beds from above for its second half, so the cameras'
+mean image-up leaned 68° from vertical, no floor was found and its first tour was tilted.
+The floor search now also uses the cameras' x axes ([PLANS.md](PLANS.md), 02-11-26
+00:50:00); the other three homes keep the same up (within 0.3°). Audit, fill, tour and
+demo were rebuilt on the same splat and checked: level walkthrough, top-down overview.
 
 Fixed during the remakes: the fill stage rendered its probe views with gradients on, so
 with reflections (a mirrored pass per plane) Coorg ran out of GPU memory; the render is
