@@ -29,6 +29,9 @@ Rules for writing lessons:
 - Check `nvidia-smi` before ad-hoc GPU renders while a pipeline runs, and `source
   spacegen/scripts/env.sh` first: without it gsplat has no CUDA.
 - Check `df -h` before launching runs that write checkpoints; the disk sits near 97%.
-- Run `bash -n` on every unattended queue script and save `status=$?` right after the
-  command: `echo "$(date) exit $?"` logs date's status, and a `>>>` typo killed a script's
-  last lines unseen.
+- Run `bash -n` on every unattended queue script, save `status=$?` right after the
+  command, and gate on a command's own status, never a pipe's: `echo "$(date) exit $?"`
+  logs date's status, a `>>>` typo killed a script's last lines unseen, and
+  `pytest | tail -1 && git commit` committed after a failing test.
+- Seed random test inputs and keep them clear of thresholds (clipping at 0.98): an
+  unseeded `torch.rand` target failed one test run in nine.

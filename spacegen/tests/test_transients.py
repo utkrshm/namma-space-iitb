@@ -94,8 +94,10 @@ def test_flagged_pixels_have_no_depth_target_and_no_photometric_gradient(tmp_pat
     _, metric, _, _ = Priors(tmp_path, images, masks=masks).get(0, "cpu")
     assert torch.all(metric[:, 6:] == 0) and torch.all(metric[:, :6] == 0.5)
 
-    rgb = torch.rand((16, 20, 3), requires_grad=True)
-    target = torch.rand((16, 20, 3))
+    # Targets below the clipping level (0.98), where a brighter render would cost nothing.
+    generator = torch.Generator().manual_seed(0)
+    rgb = torch.rand((16, 20, 3), generator=generator).requires_grad_()
+    target = 0.9 * torch.rand((16, 20, 3), generator=generator)
     photometric_l1(hide_flagged(rgb, target, masks.get(0, "cpu")), target, 0.98).backward()
     assert torch.all(rgb.grad[:, 12:] == 0)
     assert torch.all(rgb.grad[:, :12] != 0)
