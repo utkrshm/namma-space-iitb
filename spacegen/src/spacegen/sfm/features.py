@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 
 from ..config import SfmConfig
+from ..contracts import write_atomic, write_text_atomic
 
 
 def extract_features(images: Path, names: list[str], cache: Path, config: SfmConfig, device: str):
@@ -35,13 +36,13 @@ def extract_features(images: Path, names: list[str], cache: Path, config: SfmCon
         tensor = torch.from_numpy(rgb).permute(2, 0, 1).float().div(255).to(device)
         with torch.inference_mode():
             feature = extractor.extract(tensor, resize=config.feature_long_side)
-        np.savez(
-            path,
-            keypoints=feature["keypoints"][0].cpu().numpy().astype(np.float32),
-            scores=feature["keypoint_scores"][0].cpu().numpy().astype(np.float32),
-            descriptors=feature["descriptors"][0].cpu().numpy().astype(np.float16),
-            image_size=np.array(rgb.shape[1::-1], np.float32),
-        )
+        arrays = {
+            "keypoints": feature["keypoints"][0].cpu().numpy().astype(np.float32),
+            "scores": feature["keypoint_scores"][0].cpu().numpy().astype(np.float32),
+            "descriptors": feature["descriptors"][0].cpu().numpy().astype(np.float16),
+            "image_size": np.array(rgb.shape[1::-1], np.float32),
+        }
+        write_atomic(path, lambda stream, arrays=arrays: np.savez(stream, **arrays))
     del extractor
 
 
@@ -76,7 +77,7 @@ def global_descriptors(images: Path, names: list[str], cache: Path, config: SfmC
             descriptors.append(torch.nn.functional.normalize(output, dim=-1).cpu().numpy())
     del model
     descriptors = np.concatenate(descriptors)
-    np.save(path, descriptors)
+    write_atomic(path, lambda stream: np.save(stream, descriptors))
     return descriptors
 
 
@@ -188,6 +189,7 @@ def match_pairs(cache: Path, features: list[dict], pairs, config: SfmConfig, dev
             matches[(record["i"], record["j"])] = pair_matches
         listing.append(record)
 
-    np.savez(matches_path, **{f"{i}-{j}": value for (i, j), value in matches.items()})
-    listing_path.write_text(json.dumps(listing) + "\n")
+    arrays = {f"{i}-{j}": value for (i, j), value in matches.items()}
+    write_atomic(matches_path, lambda stream: np.savez(stream, **arrays))
+    write_text_atomic(listing_path, json.dumps(listing) + "\n")
     return matches, listing

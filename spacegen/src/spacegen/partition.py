@@ -32,6 +32,7 @@ import numpy as np
 import torch
 
 from .config import PipelineConfig
+from .contracts import write_text_atomic
 from .sfm import Solution
 from .splat import load_ply, save_ply, train_splat
 from .splat.model import GaussianModel
@@ -262,5 +263,5 @@ def train_in_blocks(
         log=log,
     )
     metrics["blocks"] = summary
-    (final / "metrics.json").write_text(json.dumps(metrics, indent=1) + "\n")
+    write_text_atomic(final / "metrics.json", json.dumps(metrics, indent=1) + "\n")
     return metrics

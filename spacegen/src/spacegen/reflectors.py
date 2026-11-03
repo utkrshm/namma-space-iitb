@@ -32,6 +32,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from .contracts import write_text_atomic
 from .depth import near_inverse_depth, read_rgb
 from .scene_frame import estimate_frame
 from .sfm import Solution
@@ -109,7 +110,7 @@ def find_reflectors(
         )
     )
     if cache is not None:
-        cache.write_text(json.dumps(result, indent=1) + "\n")
+        write_text_atomic(cache, json.dumps(result, indent=1) + "\n")
     if not result["planes"]:
         return None
     return _without_floor(result, floor)

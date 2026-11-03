@@ -42,6 +42,10 @@ These are also in `spacegen/contracts.py`.
   Intrinsics refer to the stated width × height, with integer pixel centres.
 - **COLMAP:** pixel centres at (0.5, 0.5); `sfm.solve.load_solution` converts them.
 - **gsplat:** samples at (u + ½, v + ½); `splat.model.render` converts at the boundary.
+- **Files a resumed run reuses** (per-image caches, `frames.json`, `alignment.json`,
+  reports, checkpoints) are written through a temporary file and renamed into place
+  (`contracts.write_atomic`, `splat.model.write_json`), so a kill never leaves a
+  truncated file that a later run trusts.
 
 ## Stage contracts
 

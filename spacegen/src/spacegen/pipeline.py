@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 from .config import PipelineConfig
+from .contracts import write_text_atomic
 from .depth import align_depth_maps, compute_depth
 from .ingest import ingest
 from .sfm import load_solution, solve_cameras
@@ -55,7 +56,7 @@ def run(
     last = STAGES.index(until)
 
     def save():
-        report_path.write_text(json.dumps(report, indent=1, default=str) + "\n")
+        write_text_atomic(report_path, json.dumps(report, indent=1, default=str) + "\n")
 
     def timed(stage, function):
         log(f"stage {stage}")

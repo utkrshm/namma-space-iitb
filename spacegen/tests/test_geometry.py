@@ -10,7 +10,7 @@ import torch
 
 from spacegen.audit import between, turn_deg
 from spacegen.config import PipelineConfig, TourConfig
-from spacegen.contracts import Camera, file_stamp, look_at, made_from
+from spacegen.contracts import Camera, file_stamp, look_at, made_from, write_atomic
 from spacegen.depth import depth_normals, fit_inverse_depth, near_inverse_depth
 from spacegen.fill import align_depth, probe_camera, standing_points
 from spacegen.partition import balanced_split
@@ -281,6 +281,26 @@ def test_filmed_arc_follows_the_cameras_near_the_standing_point():
     assert 5 <= low <= 25 and 95 <= high <= 115
     assert arc["pitch_deg"] == pytest.approx(-25, abs=0.5)
     assert arc["cameras"] == 30
+
+
+def test_a_failed_write_keeps_the_old_file_and_leaves_no_temporary(tmp_path):
+    path = tmp_path / "depth.npy"
+    write_atomic(path, lambda stream: np.save(stream, np.arange(4.0)))
+    assert np.array_equal(np.load(path), np.arange(4.0))
+
+    def killed(stream):
+        np.save(stream, np.zeros(1000))
+        raise KeyboardInterrupt  # a kill halfway through writing
+
+    with pytest.raises(KeyboardInterrupt):
+        write_atomic(path, killed)
+    assert np.array_equal(np.load(path), np.arange(4.0))
+    assert [p.name for p in tmp_path.iterdir()] == ["depth.npy"]
+
+    archive = tmp_path / "planar.npz"
+    write_atomic(archive, lambda stream: np.savez_compressed(stream, planar=np.ones(3, bool)))
+    with np.load(archive) as data:
+        assert data["planar"].all()
 
 
 def test_cached_outputs_follow_the_splat_they_were_made_from(tmp_path):

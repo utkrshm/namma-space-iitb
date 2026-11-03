@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from ..config import SfmConfig
+from ..contracts import write_text_atomic
 
 
 def camera_params(width: int, height: int, model: str) -> str:
@@ -149,7 +150,7 @@ def build_database(
             with pycolmap.Database.open(database_path) as database:
                 database.clear_two_view_geometries()
             pycolmap.verify_matches(database_path, pairs_path, verification)
-    stamp_path.write_text(json.dumps({"inputs": stamp, "focal": focal}))
+    write_text_atomic(stamp_path, json.dumps({"inputs": stamp, "focal": focal}))
     return database_path
 
 

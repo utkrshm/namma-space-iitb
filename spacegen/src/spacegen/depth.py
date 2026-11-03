@@ -29,6 +29,7 @@ import numpy as np
 import torch
 
 from .config import DepthConfig
+from .contracts import write_atomic, write_text_atomic
 
 
 def read_rgb(path: Path, long_side: int | None = None, downscale: int = 1) -> np.ndarray:
@@ -70,7 +71,8 @@ def compute_depth(
         resized = torch.nn.functional.interpolate(
             predicted, size=rgb.shape[:2], mode="bilinear", align_corners=False
         )[0, 0]
-        np.save(output, resized.cpu().numpy().astype(np.float16))
+        depth = resized.cpu().numpy().astype(np.float16)
+        write_atomic(output, lambda stream, depth=depth: np.save(stream, depth))
     del model
     return target
 
@@ -165,7 +167,7 @@ def align_depth_maps(solution, depth_dir, min_points: int = 30, max_error: float
         a, b, error = fit_inverse_depth(mono[pixel[:, 1], pixel[:, 0]], 1 / z)
         if a > 0 and error <= max_error:
             fits[path.stem] = {"a": a, "b": b, "points": len(z), "error": error}
-    target.write_text(json.dumps(fits, indent=1) + "\n")
+    write_text_atomic(target, json.dumps(fits, indent=1) + "\n")
     return fits
 
 
@@ -254,7 +256,7 @@ def align_metric_depth(solution, depth_dir, min_points: int = 30) -> dict:
         for index in missing:
             gap = np.linalg.norm(centres - solution.cameras[index].centre, axis=1)
             entries[stems[index]] = dict(entries[stems[known[int(np.argmin(gap))]]])
-    target.write_text(json.dumps(entries, indent=1) + "\n")
+    write_text_atomic(target, json.dumps(entries, indent=1) + "\n")
     return entries
 
 

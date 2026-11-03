@@ -38,6 +38,7 @@ import cv2
 import numpy as np
 
 from .config import IngestConfig
+from .contracts import write_atomic, write_text_atomic
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 
@@ -213,7 +214,7 @@ def ingest(source: str | Path, output_dir: str | Path, config: IngestConfig | No
         raise FileNotFoundError(source)
     if len(listing["frames"]) < 3:
         raise ValueError(f"Only {len(listing['frames'])} usable frames in {source}")
-    listing_path.write_text(json.dumps(listing, indent=1) + "\n")
+    write_text_atomic(listing_path, json.dumps(listing, indent=1) + "\n")
     return listing
 
 
@@ -248,7 +249,7 @@ def _ingest_images(source: Path, output: Path, config: IngestConfig) -> dict:
 def _ingest_video(source: Path, output: Path, config: IngestConfig) -> dict:
     measures = measure_video(source, config)
     # Kept for re-slicing (`spacegen.reslice`), which picks extra frames by the same rule.
-    np.savez(output / "measures.npz", **measures)
+    write_atomic(output / "measures.npz", lambda stream: np.savez(stream, **measures))
     chosen, step = select_video_frames(measures, config)
     rotation = int(measures["rotation"])
     frames, by_index = [], {index: number for number, index in enumerate(chosen)}

@@ -23,6 +23,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from .contracts import write_atomic, write_text_atomic
 from .depth import read_rgb
 from .reflectors import SEGMENTER, _frame_depth
 from .sfm import Solution
@@ -170,8 +171,11 @@ def planar_priors(
                     take &= ~planar
                     inverse[take] = plane[take]
                     planar |= take
-        np.savez_compressed(
-            output / f"{stem}.npz", inverse=inverse.astype(np.float16), planar=planar
+        write_atomic(
+            output / f"{stem}.npz",
+            lambda stream, inverse=inverse, planar=planar: np.savez_compressed(
+                stream, inverse=inverse.astype(np.float16), planar=planar
+            ),
         )
         shares.append(float(planar.mean()))
 
@@ -184,6 +188,6 @@ def planar_priors(
         "planar_share_mean": float(np.mean(shares)) if shares else 0.0,
         "threshold": threshold,
     }
-    summary_path.write_text(json.dumps(summary, indent=1) + "\n")
+    write_text_atomic(summary_path, json.dumps(summary, indent=1) + "\n")
     log(f"planar: {summary}")
     return summary

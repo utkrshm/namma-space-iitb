@@ -44,7 +44,7 @@ import numpy as np
 import torch
 
 from .config import PipelineConfig
-from .contracts import Camera
+from .contracts import Camera, write_atomic, write_text_atomic
 from .sfm import Solution, load_solution
 
 
@@ -286,7 +286,7 @@ def reslice(
         measures = dict(np.load(measures_path))
     else:
         measures = measure_video(source, config.ingest)
-        np.savez(measures_path, **measures)
+        write_atomic(measures_path, lambda stream: np.savez(stream, **measures))
     taken = {f["index"] for f in listing["frames"]}
     every = config.splat.holdout_every
     held_out = [f["index"] for f in listing["frames"] if every and f["position"] % every == 0]
@@ -397,7 +397,7 @@ def reslice(
                     "error": error,
                     "source": "preview",
                 }
-        fits_path.write_text(json.dumps(fits, indent=1) + "\n")
+        write_text_atomic(fits_path, json.dumps(fits, indent=1) + "\n")
 
     summary = {
         "weak_segments": len(weak),
@@ -406,8 +406,8 @@ def reslice(
         "registered": len(registered),
         "preview_held_out_psnr_cc": audit["summary"]["held_out_psnr_cc_median"],
     }
-    (out / "extra.json").write_text(
-        json.dumps({"summary": summary, "frames": records}, indent=1) + "\n"
+    write_text_atomic(
+        out / "extra.json", json.dumps({"summary": summary, "frames": records}, indent=1) + "\n"
     )
     log(f"reslice: {json.dumps(summary)}")
     return summary

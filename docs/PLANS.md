@@ -14,6 +14,27 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 04-11-26 01:06:08 IST — spacegen: atomic writes for every file a resumed run trusts
+
+- **Status:** adopted (CPU-tested).
+- **Decision:** `contracts.write_atomic(path, write)` writes through a hidden temporary
+  file in the same folder and renames it into place. Every output that a later run
+  reuses because it exists goes through it: per-image features, global descriptors,
+  matches, monocular and metric depth, plane priors, `frames.json`, `measures.npz`,
+  `alignment.json`, `metric/scale.json`, `mvs.json`, `scene_frame.json`, the reflector
+  cache, `reslice/extra.json`, the SfM report and stamp, block `metrics.json` and
+  `report.json`.
+- **Rationale and trade-offs:** these were written in place, and each stage skips
+  inputs whose file exists. A kill mid-write (systemd-oomd has killed runs here) would
+  leave a truncated file that every resume trusts and then crashes on, or reads as a
+  corrupt map. A rename within one folder is atomic on Linux; the cost is one rename per
+  file.
+- **Affected components:** `spacegen.contracts`, `ingest`, `sfm.features`,
+  `sfm.mapping`, `sfm.solve`, `depth`, `mvs`, `planar`, `reflectors`, `scene_frame`,
+  `reslice`, `partition`, `pipeline`.
+- **Completion criteria:** CPU test (a failed write leaves the old file intact and no
+  temporary behind); CPU suite passes.
+
 ## 04-11-26 01:02:32 IST — spacegen: frame the overview on the kept geometry, not the camera path
 
 - **Status:** adopted (checked on CPU point projections of three runs; tour and demo

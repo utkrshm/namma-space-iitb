@@ -132,3 +132,21 @@ def made_from(record: dict, cached, source) -> bool:
     if stamp is None:
         return Path(cached).stat().st_mtime_ns >= Path(source).stat().st_mtime_ns
     return stamp == file_stamp(source)
+
+
+def write_atomic(path, write) -> None:
+    """Write ``path`` by calling ``write(binary file)`` on a hidden temporary file in the
+    same folder, then renaming it into place. Stages reuse outputs that exist, so a kill
+    mid-write must not leave a truncated file behind."""
+    path = Path(path)
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(temporary, "wb") as stream:
+            write(stream)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_text_atomic(path, text: str) -> None:
+    write_atomic(path, lambda stream: stream.write(text.encode()))

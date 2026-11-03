@@ -33,7 +33,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .contracts import Camera
+from .contracts import Camera, write_text_atomic
 
 
 @dataclass
@@ -95,7 +95,7 @@ def run_frame(run, cameras: list[Camera], points=None, refresh: bool = False) ->
 
         points = run_solution(run).points
     frame = estimate_frame(cameras, points)
-    path.write_text(json.dumps(frame.to_dict(), indent=1) + "\n")
+    write_text_atomic(path, json.dumps(frame.to_dict(), indent=1) + "\n")
     return frame
 
 

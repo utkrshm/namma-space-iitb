@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from ..config import SfmConfig
-from ..contracts import Camera
+from ..contracts import Camera, write_text_atomic
 from .features import build_pairs, extract_features, global_descriptors, load_features, match_pairs
 from .loops import check_loops
 from .mapping import build_database, run_mapper, undistort
@@ -213,7 +213,7 @@ def solve_cameras(frames_dir, output_dir, config: SfmConfig | None = None, devic
         "largest_model": _model_summary(models[0], len(frames)),
         "timings": timings,
     }
-    report_path.write_text(json.dumps(report, indent=1) + "\n")
+    write_text_atomic(report_path, json.dumps(report, indent=1) + "\n")
     return report
 
 

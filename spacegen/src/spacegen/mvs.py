@@ -44,7 +44,7 @@ import torch
 import torch.nn.functional as F
 
 from .config import MvsConfig
-from .contracts import Camera
+from .contracts import Camera, write_text_atomic
 from .depth import near_inverse_depth, read_rgb
 
 
@@ -328,7 +328,9 @@ def compute_mvs(solution, depth_dir, config: MvsConfig, device="cuda:0", log=pri
         "measured_median": float(np.median(shares)),
         "mono_error_median": float(np.median(errors)) if errors else None,
     }
-    summary_path.write_text(json.dumps({"summary": summary, "images": images}, indent=1) + "\n")
+    write_text_atomic(
+        summary_path, json.dumps({"summary": summary, "images": images}, indent=1) + "\n"
+    )
     log(f"mvs: {json.dumps(summary)}")
     return summary
 
