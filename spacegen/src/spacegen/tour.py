@@ -1,9 +1,9 @@
 """Tour video of a finished space: overview orbit, a look-around in each area, a walk.
 
 1. **Overview:** a slow orbit from above with the ceiling cut away (a "dollhouse"
-   view). It drops Gaussians above 1.15 camera heights, below the floor, and far outside
-   the camera path, which are never seen from above, and is framed on what it keeps
-   (`framing_distance`).
+   view). It drops Gaussians above 1.15 camera heights and far outside the camera path,
+   keeps what lies under the floor (a glossy floor is half-transparent over a mirrored
+   room) and is framed on what it keeps (`framing_distance`).
 2. **Look-around:** at each area's standing point, a turn through the directions the
    capture filmed from near there, at the phone's own tilt (`filmed_arc`). Every 5° view
    is checked before rendering (`_checked_arc`); only the longest passing part is played,
@@ -169,12 +169,16 @@ def measured_support(model, camera):
 
 
 def cutaway(model: GaussianModel, frame: SceneFrame, centres_aligned: np.ndarray) -> GaussianModel:
+    """What an overview from above shows: Gaussians below 1.15 camera heights, within 1.6
+    of the camera path (horizontally) and smaller than 0.5. Those under the floor stay: a
+    glossy floor is learned as a half-transparent surface over a mirrored room, and
+    without it the floor was a hole from above (vyas-room, m-block)."""
     from scipy.spatial import cKDTree
 
     aligned = frame.to_aligned(model.params["means"].detach().cpu().numpy())
     distance, _ = cKDTree(centres_aligned[:, :2]).query(aligned[:, :2])
     scale = model.params["scales"].detach().exp().max(1).values.cpu().numpy() / frame.camera_height
-    keep = (aligned[:, 2] < 1.15) & (aligned[:, 2] > -0.3) & (distance < 1.6) & (scale < 0.5)
+    keep = (aligned[:, 2] < 1.15) & (distance < 1.6) & (scale < 0.5)
     return model.subset(torch.from_numpy(keep).to(model.device))
 
 

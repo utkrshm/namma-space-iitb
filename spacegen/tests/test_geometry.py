@@ -653,3 +653,27 @@ def test_bilateral_grid_starts_at_identity_and_maps_by_brightness():
     loaded.load_state_dict(corrections.state_dict())
     assert torch.equal(loaded.grid, corrections.grid)
     assert Corrections.for_state(Corrections(5).state_dict()).grid is None
+
+
+def test_the_overview_cutaway_keeps_what_lies_under_a_glossy_floor():
+    from spacegen.splat.model import GaussianModel
+    from spacegen.tour import cutaway
+
+    # Under the floor, on it, at table height, above the cut, far from the path, huge.
+    means = [[0, 0, -1.0], [0.5, 0, 0], [0, 0.5, 1.0], [0, 0, 1.5], [3.0, 0, 0.5], [0, 0, 0.5]]
+    sizes = [0.01, 0.01, 0.01, 0.01, 0.01, 0.8]
+    count = len(means)
+    model = GaussianModel(
+        {
+            "means": torch.tensor(means),
+            "scales": torch.log(torch.tensor(sizes))[:, None].repeat(1, 3),
+            "quats": torch.tensor([[1.0, 0, 0, 0]] * count),
+            "opacities": torch.zeros(count),
+            "sh0": torch.zeros((count, 1, 3)),
+            "shn": torch.zeros((count, 0, 3)),
+        },
+        0,
+    )
+    frame = SceneFrame(np.eye(3), np.zeros(3), 1.0, True, [])
+    kept = cutaway(model, frame, np.array([[0.0, 0.0, 1.0]]))
+    assert kept.params["means"][:, 2].tolist() == [-1.0, 0.0, 1.0]

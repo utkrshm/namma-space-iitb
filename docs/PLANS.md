@@ -14,6 +14,31 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 04-11-26 04:52:49 IST — spacegen: the overview keeps what lies under a glossy floor
+
+- **Status:** adopted (CPU renders of three runs).
+- **Finding:** in the CPU tour preview of vyas_room, the overview showed a ring of
+  furniture and no floor. The floor Gaussians are there (297k within 0.1 camera heights,
+  small), but with the floor reflector off, the glossy tiles are learned as a
+  half-transparent surface over a mirrored room. 90k opaque Gaussians lie down to 0.6
+  camera heights below the floor, and the mirrored ceiling lies further down. The
+  cutaway dropped everything below −0.3, so from above the floor was a hole: 80% of the
+  frame with alpha < 0.5, against 71% keeping all. m-block's wooden floor is the same:
+  dark holes between the furniture, 66% against 58%. new_home's marble floor is opaque,
+  with 458 Gaussians below; nothing changes there.
+- **Decision:** `tour.cutaway` keeps Gaussians below the floor. Still dropped: those above
+  1.15 camera heights, those farther than 1.6 from the path, and those larger than 0.5.
+  From above, the floor then shows what the half-transparent tiles let through, mostly the
+  mirrored ceiling: pale on vyas_room, the wood on m-block. The demo's build-up uses the
+  same cutaway.
+- **Rationale and trade-offs:** a floor that reads as a floor matters more in a dollhouse
+  view than whether its colour comes from the surface or from what shows through it. An
+  opaque floor would need the floor reflector, which cost 1.2 dB held-out on vyas-room
+  (31 Oct). A capture with a real lower level now keeps it in the overview too.
+- **Affected components:** `spacegen.tour.cutaway`, its docstring, tests.
+- **Completion criteria:** CPU test of the cut; CPU overview renders of vyas_room,
+  m-block and new_home checked by eye (done).
+
 ## 04-11-26 04:47:45 IST — spacegen: held-out PSNR with the neighbours' exposure (`psnr_nb`)
 
 - **Status:** adopted.
