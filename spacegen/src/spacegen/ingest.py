@@ -73,18 +73,27 @@ def _decode(path: Path, long_side: int | None, rotation: int, wanted: set[int] |
         stream = container.streams.video[0]
         stream.thread_type = "AUTO"
         start = stream.start_time or 0
+        rate = float(stream.average_rate or stream.guessed_rate or 30)
         for index, frame in enumerate(container.decode(stream)):
             if wanted is not None and index not in wanted:
                 continue
             scale = (
                 1.0 if long_side is None else min(1.0, long_side / max(frame.width, frame.height))
             )
+            # The frame's own colour range: left unspecified, swscale reads plain yuv420p
+            # as limited range, which stretches a full-range phone video's contrast
+            # (clipped windows, crushed shadows). The colour matrix follows the frame.
             rgb = frame.reformat(
                 width=round(frame.width * scale) // 2 * 2,
                 height=round(frame.height * scale) // 2 * 2,
                 format="rgb24",
+                src_color_range=int(frame.color_range) or None,
             ).to_ndarray()
-            seconds = float((frame.pts - start) * Fraction(frame.time_base)) if frame.pts else 0.0
+            # Containers without timestamps: frame number over the stream's frame rate.
+            if frame.pts is None or frame.time_base is None:
+                seconds = index / rate
+            else:
+                seconds = float((frame.pts - start) * Fraction(frame.time_base))
             yield index, seconds, _upright(rgb, rotation)
             if wanted is not None and index == max(wanted):
                 return
