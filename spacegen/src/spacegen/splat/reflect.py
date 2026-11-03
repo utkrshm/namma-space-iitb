@@ -115,12 +115,22 @@ def within_bounds(points: torch.Tensor, reflectors: dict, margin: float = 0.0) -
     )
 
 
-def behind_opaque(points: torch.Tensor, reflectors: dict) -> torch.Tensor:
-    """[N]: the point lies behind (beyond ``tau``) a floor or mirror, inside its bounds:
-    a reflection seen as a room behind the mirror, not a real surface."""
-    planes = reflectors["planes"]
-    behind = (points @ planes[:, :3].T + planes[:, 3]) < -reflectors["tau"]
-    return (behind & within_bounds(points, reflectors) & reflectors["opaque"]).any(-1)
+def seen_through_opaque(points: torch.Tensor, eyes: torch.Tensor, reflectors: dict) -> torch.Tensor:
+    """[N]: seen from ``eyes`` ([N,3] or [3]), the point lies behind (beyond ``tau``) a
+    floor or mirror and the line of sight crosses that plane inside its bounds: a
+    reflection seen as a room behind the mirror, not a real surface. A real room behind
+    the mirror's wall, filmed from its own side, does not count."""
+    planes, axes, bounds = reflectors["planes"], reflectors["axes"], reflectors["bounds"]
+    eyes = eyes.expand_as(points)
+    eye_side = eyes @ planes[:, :3].T + planes[:, 3]
+    point_side = points @ planes[:, :3].T + planes[:, 3]
+    crossing = (eye_side > 0) & (point_side < -reflectors["tau"])
+    t = eye_side / (eye_side - point_side).clamp_min(1e-12)
+    hit = eyes[:, None] + t[..., None] * (points - eyes)[:, None]  # [N,K,3]
+    u = torch.einsum("nkc,kc->nk", hit, axes[:, 0])
+    v = torch.einsum("nkc,kc->nk", hit, axes[:, 1])
+    inside = (u >= bounds[:, 0]) & (u <= bounds[:, 1]) & (v >= bounds[:, 2]) & (v <= bounds[:, 3])
+    return (crossing & inside & reflectors["opaque"]).any(-1)
 
 
 def quat_multiply(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:

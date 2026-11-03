@@ -259,3 +259,66 @@ def test_metric_depth_prior_puts_a_blank_wall_in_place(tmp_path):
     without = blank_error(0.0, "none")
     assert with_prior < 0.02, (with_prior, without)
     assert with_prior < 0.5 * without, (with_prior, without)
+
+
+def test_training_killed_mid_run_resumes_from_its_checkpoint(tmp_path):
+    """A run stopped after its step-1000 checkpoint continues from step 1001, with its
+    optimizer state, and ends as good as an uninterrupted run."""
+    truth = textured_wall()
+    cameras = front_cameras(30)
+    paths = []
+    for camera in cameras:
+        with torch.no_grad():
+            rgb, _, _, _ = render_camera(truth, camera)
+        path = tmp_path / f"{camera.name}.png"
+        cv2.imwrite(str(path), (rgb.clamp(0, 1) * 255).round().byte().cpu().numpy()[..., ::-1])
+        paths.append(path)
+    rng = np.random.default_rng(0)
+    points = np.c_[rng.uniform(-1, 1, 400), rng.normal(0, 0.02, 400), rng.uniform(0, 2, 400)]
+    config = SplatConfig(
+        steps=1500,
+        max_gaussians=20_000,
+        resolution_schedule=((0, 1),),
+        holdout_every=0,
+        pose_refinement=False,
+        appearance=False,
+        depth_prior_weight=0.0,
+        refine_stop=1200,
+        evaluate_every=10**9,
+        checkpoint_every=1000,
+        log_every=100,
+    )
+    train = [i for i in range(30) if i % 5]
+    val = [i for i in range(30) if i % 5 == 0]
+
+    def run(name, log):
+        return train_splat(
+            cameras,
+            paths,
+            points.astype(np.float32),
+            np.full((400, 3), 0.5, np.float32),
+            tmp_path / name,
+            config,
+            train_indices=train,
+            val_indices=val,
+            log=log,
+        )
+
+    whole = run("whole", lambda _: None)
+
+    class Killed(Exception):
+        pass
+
+    def kill(message):
+        if message.startswith("step 1200 "):
+            raise Killed
+
+    with pytest.raises(Killed):
+        run("killed", kill)
+    messages = []
+    again = run("killed", messages.append)
+    assert "resumed from the checkpoint at step 1001" in messages
+    assert not any(m.startswith("step 500 ") for m in messages)
+    steps = [json.loads(r)["step"] for r in (tmp_path / "killed" / "training.jsonl").open()]
+    assert steps == sorted(set(steps)) and steps[-1] == 1499
+    assert again["val"]["psnr"] > whole["val"]["psnr"] - 0.5, (again["val"], whole["val"])

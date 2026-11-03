@@ -25,7 +25,7 @@ from scipy.ndimage import gaussian_filter1d
 
 from .config import DemoConfig
 from .contracts import Camera, look_at
-from .scene_frame import SceneFrame, estimate_frame
+from .scene_frame import run_frame
 from .splat.model import load_ply, render_camera, write_json
 from .splat.train import load_cameras
 from .tour import Writer, cutaway, ease, label, measured_support
@@ -107,14 +107,7 @@ def render_demo(run: Path, config: DemoConfig, device: str, log) -> dict:
         from .support import compute_support
 
         model.extras["support"] = compute_support(model, train)
-    if (run / "scene_frame.json").exists():
-        frame = SceneFrame.load(run / "scene_frame.json")
-    else:
-        from .sfm import load_solution
-
-        solution = load_solution(run / "sfm", run / "frames")
-        frame = estimate_frame(train, solution.points)
-        write_json(run / "scene_frame.json", frame.to_dict())
+    frame = run_frame(run, cameras)
     up, height_unit = frame.up, frame.camera_height
     width = round(config.width * config.supersample)
     height = round(config.height * config.supersample)

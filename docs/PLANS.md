@@ -14,6 +14,42 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 03-11-26 23:25:00 IST — spacegen: fixes from the code review of `spacegen/src`
+
+- **Status:** adopted; CPU tests pass. GPU tests are written but not run: the GPU has been
+  down since 03-11-26 ~18:50 IST (`outputs/automation/GPU_DOWN.md`).
+- **Decision:** fix what the review (`/code-review high`) found:
+  1. Area camera indices in `scene_frame.json` count all cameras of `splat/cameras.json`.
+     Fill counted training cameras only; tour counted all, and demo training only, so
+     standing points came from the wrong cameras, increasingly so later in a capture. One
+     helper (`scene_frame.run_frame`) now makes and reads the file, and stores
+     `camera_count`, so a file counted otherwise is remade.
+  2. Frame selection on videos longer than `max_frames × max_gap_s` (15 min) looped
+     forever: the time gap now widens so that time cuts alone fit in `max_frames`.
+  3. Mirrors: only points and depths *seen through* a mirror (the line of sight from a
+     camera in front crosses the mirror rectangle) count as reflections. Before,
+     everything behind the plane did, which in a house deletes the real room behind a
+     bathroom mirror's wall. Seed points are dropped when most of their views see them
+     through the plane.
+  4. Reflector planes count distinct frames (a window split by mullions in one frame
+     counted as 3); the reflector cache is reused only for the same solution size and
+     glass setting; mirrors and windows are still searched when no floor is found.
+  5. Training resumes mid-run: checkpoints every `checkpoint_every` steps also hold the
+     optimizer states, view order and random state, keyed by the run's configuration and
+     split. Before, an oomd kill at step 29,000 restarted from 0.
+  6. Smaller fixes: gap seeds run on the pipeline's device; fill no longer divides
+     gsplat's expected depth by alpha a second time (it inflated fill depth by up to 11%);
+     support weights use `autograd.grad` instead of `backward()`, which left gradients on
+     the model's parameters; images are loaded only for the cameras a run uses.
+- **Rationale and trade-offs:** each was a silent wrong result or a lost run. Mid-run
+  checkpoints are 3× larger (Adam moments); the final checkpoint keeps its size.
+- **Affected components:** `scene_frame.py`, `fill.py`, `tour.py`, `demo.py`,
+  `ingest.py`, `splat/reflect.py`, `splat/train.py`, `splat/init.py`, `splat_stage.py`,
+  `reflectors.py`, `support.py`; `spacegen/docs/ARCHITECTURE.md`.
+- **Completion criteria:** CPU tests for 1–4 pass; the GPU resume test
+  (`test_training_killed_mid_run_resumes_from_its_checkpoint`) and the existing GPU tests
+  pass once the GPU is back.
+
 ## 02-11-26 00:50:00 IST — spacegen: find the floor when the video looks straight down
 
 - **Status:** adopted.

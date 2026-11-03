@@ -125,17 +125,19 @@ def measure_video(path: Path, config: IngestConfig) -> dict[str, np.ndarray]:
     }
 
 
-def choose_frames(times, sharp, motion, config: IngestConfig, step: float) -> list[int]:
-    """Sharpest frame of each piece of the timeline holding ``step`` of motion."""
+def choose_frames(
+    times, sharp, motion, config: IngestConfig, step: float, max_gap_s: float | None = None
+) -> list[int]:
+    """Sharpest frame of each piece of the timeline holding ``step`` of motion, or lasting
+    ``max_gap_s`` (default ``config.max_gap_s``)."""
+    max_gap_s = config.max_gap_s if max_gap_s is None else max_gap_s
     chosen, start = [], 0
     accumulated = 0.0
     for index in range(1, len(times) + 1):
         if index < len(times):
             accumulated += motion[index]
         end_of_piece = (
-            index == len(times)
-            or accumulated >= step
-            or times[index] - times[start] >= config.max_gap_s
+            index == len(times) or accumulated >= step or times[index] - times[start] >= max_gap_s
         )
         if not end_of_piece:
             continue
@@ -153,8 +155,12 @@ def select_video_frames(measures: dict, config: IngestConfig) -> tuple[list[int]
     """Frame indices and the motion step used; the step grows until ``max_frames`` fits."""
     times, sharp, motion = measures["times"], measures["sharpness"], measures["motion"]
     step = config.motion_step
+    # Time cuts alone must fit in max_frames, or a growing step never gets there (a video
+    # longer than max_frames × max_gap_s, 15 minutes by default, would loop forever).
+    duration = float(times[-1] - times[0]) if len(times) else 0.0
+    max_gap_s = max(config.max_gap_s, duration / max(config.max_frames - 1, 1))
     while True:
-        chosen = choose_frames(times, sharp, motion, config, step)
+        chosen = choose_frames(times, sharp, motion, config, step, max_gap_s)
         if len(chosen) <= config.max_frames:
             return chosen, step
         step *= len(chosen) / config.max_frames * 1.05

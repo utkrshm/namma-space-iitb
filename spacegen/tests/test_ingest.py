@@ -77,3 +77,21 @@ def test_image_folder_keeps_natural_order(tmp_path):
 def test_sharpness_drops_with_blur():
     image = np.random.default_rng(0).integers(0, 255, (240, 320), dtype=np.uint8)
     assert sharpness(cv2.blur(image, (9, 9))) < 0.1 * sharpness(image)
+
+
+def test_long_video_frame_selection_ends_within_max_frames():
+    """Twenty minutes of steady motion: cutting every max_gap_s alone gives more pieces
+    than max_frames, which once made the step grow forever."""
+    from spacegen.ingest import select_video_frames
+
+    times = np.arange(0, 20 * 60, 1 / 30)
+    rng = np.random.default_rng(0)
+    measures = {
+        "times": times,
+        "sharpness": rng.uniform(50, 100, len(times)),
+        "motion": np.full(len(times), 0.002),
+    }
+    config = IngestConfig(max_frames=1200, max_gap_s=0.75)
+    chosen, _ = select_video_frames(measures, config)
+    assert 1000 <= len(chosen) <= 1200
+    assert np.all(np.diff(chosen) > 0)

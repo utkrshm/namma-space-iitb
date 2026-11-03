@@ -55,8 +55,10 @@ def blending_weight(model: GaussianModel, camera: Camera, mode="antialiased") ->
     """Per-Gaussian total blending weight in pixels (gradient of a unit colour)."""
     unit = torch.ones((model.count, 1), device=model.device, requires_grad=True)
     rgb, _, _, _ = _render_feature(model, camera, unit, mode)
-    rgb.sum().backward()
-    return unit.grad[:, 0].detach()
+    # Only d/d(unit): backward() would also add gradients to the model's parameters, which
+    # a later optimizer step (fill's distillation) would then apply.
+    (weight,) = torch.autograd.grad(rgb.sum(), unit)
+    return weight[:, 0].detach()
 
 
 def _render_feature(model, camera: Camera, feature: torch.Tensor, mode="antialiased"):

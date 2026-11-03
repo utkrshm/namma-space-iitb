@@ -3,7 +3,7 @@
 1. **Floor.** Always a candidate: polished stone, tiles and wooden floors mirror the room,
    and a floor that reflects too little learns a near-zero strength. The plane comes from
    `spacegen.scene_frame` (RANSAC on the SfM points below the cameras). It is *opaque*:
-   nothing real lies under it.
+   nothing real lies under it. When no floor plane is found, only step 2 runs.
 2. **Windows, glass doors and mirrors.** A semantic segmenter (Mask2Former trained on
    ADE20K) marks ``windowpane``, ``screen door``, ``glass`` and ``mirror`` pixels in up to
    ``max_frames`` training frames. Depth on glass is unreliable (stereo sees the reflection
@@ -17,7 +17,8 @@ Depth on each frame is multi-view stereo where measured, else the fitted monocul
 
 Output (also cached as ``<depth_dir>/reflectors.json``, with ``reflectors.jpg`` showing
 the regions used): ``{"planes" [[nx, ny, nz, d]], "tau", "kinds", "axes", "bounds",
-"opaque", "frames"}`` in world (SfM) units, with ``n · x + d = 0`` and ``n`` pointing to
+"opaque", "frames"}`` in world (SfM) units (the cache adds ``key``: the settings and
+solution size it was made for), with ``n · x + d = 0`` and ``n`` pointing to
 the cameras' side; ``tau`` (0.03 camera heights) is how far from a plane a Gaussian can
 still carry its reflection. The fields are those of `spacegen.splat.reflect.make_reflectors`.
 """
@@ -54,30 +55,35 @@ def find_reflectors(
 ) -> dict | None:
     """The planes (see the module docstring); ``floor=False`` drops the floor plane, which
     is still estimated for the up direction and scale. None when no plane is left."""
+    # The cache is reused only for the same solution and settings: the re-slice preview
+    # runs before the extra frames are added, and glass can be switched off.
+    key = {"glass": glass, "cameras": len(solution.cameras), "points": len(solution.points)}
     cache = Path(depth_dir) / "reflectors.json" if depth_dir is not None else None
     if cache is not None and cache.exists():
-        return _without_floor(json.loads(cache.read_text()), floor)
+        cached = json.loads(cache.read_text())
+        if cached.get("key") == key:
+            return _without_floor(cached, floor)
 
     cameras = [solution.cameras[i] for i in train]
     frame = estimate_frame(cameras, solution.points)
-    if not frame.floor_found:
-        log("reflectors: no floor plane found; no reflection layer")
-        return None
     height_unit = frame.camera_height
     up = np.asarray(frame.up, dtype=np.float64)
     offset = -float(up @ frame.origin)
     centres = np.stack([c.centre for c in cameras])
     if np.median(centres @ up + offset) < 0:
         up, offset = -up, -offset
-    result = {
-        "planes": [[*up.tolist(), offset]],
-        "tau": 0.03 * height_unit,
-        "kinds": ["floor"],
-        "axes": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]],
-        "bounds": [NO_BOUNDS],
-        "opaque": [True],
-        "frames": [len(train)],
-    }
+    result = {"key": key, "planes": [], "tau": 0.03 * height_unit, "kinds": [], "axes": []}
+    result.update({"bounds": [], "opaque": [], "frames": []})
+    if frame.floor_found:
+        result["planes"].append([*up.tolist(), offset])
+        result["kinds"].append("floor")
+        result["axes"].append([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+        result["bounds"].append(NO_BOUNDS)
+        result["opaque"].append(True)
+        result["frames"].append(len(train))
+    else:
+        # Mirrors and windows need only the up direction and the scale.
+        log("reflectors: no floor plane found; no floor reflector")
 
     if glass and depth_dir is not None and (Path(depth_dir) / "alignment.json").exists():
         found = _glass_planes(
@@ -95,12 +101,17 @@ def find_reflectors(
             result.setdefault("stems", {})[len(result["planes"]) - 1] = plane["stems"]
     log(
         "reflectors: "
-        + ", ".join(
-            f"{k} ({n} frames)" for k, n in zip(result["kinds"], result["frames"], strict=True)
+        + (
+            ", ".join(
+                f"{k} ({n} frames)" for k, n in zip(result["kinds"], result["frames"], strict=True)
+            )
+            or "none"
         )
     )
     if cache is not None:
         cache.write_text(json.dumps(result, indent=1) + "\n")
+    if not result["planes"]:
+        return None
     return _without_floor(result, floor)
 
 
@@ -302,7 +313,9 @@ def _merge(candidates, up, height_unit, limit: int = 4):
                 "kind": max(set(kinds), key=kinds.count),
                 "axes": [u.tolist(), v.tolist()],
                 "bounds": [low_u - margin, high_u + margin, low_v - margin, high_v + margin],
-                "frames": len(cluster),
+                # Distinct frames: one frame can give several regions (a window split
+                # by its mullions), which must not pass the min_frames gate alone.
+                "frames": len({c["stem"] for c in cluster}),
                 "stems": sorted({c["stem"] for c in cluster}),
             }
         )

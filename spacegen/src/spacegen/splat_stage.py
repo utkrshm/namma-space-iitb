@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
+
 from .config import PipelineConfig
 from .sfm import Solution
 from .splat import train_splat
@@ -59,6 +61,7 @@ def build_splat(solution: Solution, output: Path, config: PipelineConfig, depth_
             log,
             mvs_count=config.splat.mvs_seed_points,
             gap_count=config.splat.gap_seed_points,
+            device=device,
         )
     reflectors = None
     if config.splat.reflections and not finished:
@@ -74,16 +77,25 @@ def build_splat(solution: Solution, output: Path, config: PipelineConfig, depth_
             floor=config.splat.floor_reflector,
         )
     if reflectors is not None:
-        # Points behind a floor or mirror are reflections triangulated as a room behind
-        # the mirror (or under the floor); the reflection layer renders those instead.
+        # Points seen through a floor or mirror are reflections triangulated as a room
+        # behind the mirror (or under the floor); the reflection layer renders those
+        # instead. A point is dropped when most cameras that matched it saw it through the
+        # plane, so a real room behind the mirror's wall keeps its points.
         import torch
 
-        from .splat.reflect import behind_opaque, reflectors_from_dict
+        from .splat.reflect import reflectors_from_dict, seen_through_opaque
 
-        behind = behind_opaque(
-            torch.from_numpy(solution.points).float(), reflectors_from_dict(reflectors, "cpu")
-        )
-        keep = ~behind.numpy()
+        lengths = np.array([len(views) for views in solution.point_views])
+        owner = np.repeat(np.arange(len(lengths)), lengths)
+        views = np.concatenate(solution.point_views) if len(owner) else np.zeros(0, int)
+        centres = np.stack([camera.centre for camera in solution.cameras])
+        through = seen_through_opaque(
+            torch.from_numpy(solution.points[owner]).float(),
+            torch.from_numpy(centres[views]).float(),
+            reflectors_from_dict(reflectors, "cpu"),
+        ).numpy()
+        share = np.bincount(owner, through, len(lengths)) / np.maximum(lengths, 1)
+        keep = share < 0.5
         log(f"reflectors: {int((~keep).sum())} of {len(keep)} seed points lie behind a plane")
         solution = replace(
             solution,

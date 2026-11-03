@@ -12,10 +12,10 @@ from spacegen.audit import between, turn_deg
 from spacegen.config import PipelineConfig, TourConfig
 from spacegen.contracts import Camera, look_at
 from spacegen.depth import depth_normals, fit_inverse_depth, near_inverse_depth
-from spacegen.fill import align_depth, probe_camera
+from spacegen.fill import align_depth, probe_camera, standing_points
 from spacegen.partition import balanced_split
 from spacegen.reslice import choose_extra, with_extra_frames
-from spacegen.scene_frame import SceneFrame, estimate_frame, find_areas
+from spacegen.scene_frame import SceneFrame, estimate_frame, find_areas, run_frame
 from spacegen.sfm import Solution
 from spacegen.splat.train import needle_penalty, photometric_l1
 from spacegen.support import fibonacci_directions
@@ -122,6 +122,23 @@ def test_scene_frame_round_trips_through_json(tmp_path):
     (tmp_path / "frame.json").write_text(__import__("json").dumps(frame.to_dict()))
     loaded = SceneFrame.load(tmp_path / "frame.json")
     assert np.allclose(loaded.rotation, frame.rotation) and loaded.areas == frame.areas
+
+
+def test_run_frame_numbers_area_cameras_in_the_full_camera_list(tmp_path):
+    """Areas must index all cameras (training and held-out), whichever stage writes the
+    file first; a file counted over training cameras only is remade."""
+    cameras, points = _room(4)
+    train = [i for i in range(len(cameras)) if i % 8]
+    stale = estimate_frame([cameras[i] for i in train], points)
+    (tmp_path / "scene_frame.json").write_text(json.dumps(stale.to_dict()))
+
+    frame = run_frame(tmp_path, cameras, points)
+    assert frame.camera_count == len(cameras)
+    assert SceneFrame.load(tmp_path / "scene_frame.json").camera_count == len(cameras)
+    # Cameras 0-39 film the first room and 40-79 the second.
+    assert sorted(frame.areas[0]["cameras"]) == list(range(40))
+    stands = standing_points(frame, cameras)
+    assert stands[0]["camera"] < 40 <= stands[1]["camera"]
 
 
 def test_areas_split_far_apart_groups_only():
@@ -352,3 +369,47 @@ def test_near_surfaces_take_the_metric_depth():
     tensor = near_inverse_depth(torch.from_numpy(fitted), torch.from_numpy(metres), entry)
     assert np.allclose(tensor.numpy(), blended)
     assert near_inverse_depth(fitted, None, entry) is fitted
+
+
+def test_only_points_seen_through_a_mirror_count_as_its_reflection():
+    """A 1 × 1 mirror in the plane x = 0 facing +x. A point 1 m behind it is a reflection
+    when a camera in the room (x > 0) looks at it through the glass; the same point filmed
+    from the next room (x < 0), or seen past the mirror's edge, is a real surface."""
+    from spacegen.splat.reflect import make_reflectors, seen_through_opaque
+
+    reflectors = make_reflectors(
+        [[1.0, 0.0, 0.0, 0.0]],
+        0.02,
+        "cpu",
+        axes=[[[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]],
+        bounds=[[-0.5, 0.5, 1.0, 2.0]],
+        opaque=[True],
+    )
+    points = torch.tensor([[-1.0, 0.0, 1.5], [-1.0, 0.0, 1.5], [-1.0, 3.0, 1.5], [0.5, 0.0, 1.5]])
+    eyes = torch.tensor([[2.0, 0.0, 1.5], [-3.0, 0.0, 1.5], [2.0, 0.0, 1.5], [2.0, 0.0, 1.5]])
+    assert seen_through_opaque(points, eyes, reflectors).tolist() == [True, False, False, False]
+    # One eye for all points (a depth map's camera).
+    assert seen_through_opaque(points, eyes[0], reflectors).tolist() == [True, True, False, False]
+
+
+def test_reflector_frame_count_counts_distinct_frames():
+    """Three regions of one window in one frame (split by mullions) are one frame, so
+    they cannot pass the min_frames gate alone."""
+    from spacegen.reflectors import _merge
+
+    rng = np.random.default_rng(0)
+
+    def region(stem, y_low):
+        points = np.c_[np.zeros(200), rng.uniform(y_low, y_low + 0.3, 200), rng.uniform(1, 2, 200)]
+        return {
+            "normal": np.array([1.0, 0, 0]),
+            "points": points,
+            "kind": "windowpane",
+            "stem": stem,
+        }
+
+    one_frame = [region("00010", y) for y in (0.0, 0.35, 0.7)]
+    merged = _merge(one_frame, np.array([0, 0, 1.0]), 1.0)
+    assert len(merged) == 1 and merged[0]["frames"] == 1
+    three_frames = [region(stem, 0.0) for stem in ("00010", "00011", "00012")]
+    assert _merge(three_frames, np.array([0, 0, 1.0]), 1.0)[0]["frames"] == 3

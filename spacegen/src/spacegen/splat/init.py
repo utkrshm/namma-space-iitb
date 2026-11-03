@@ -89,14 +89,15 @@ def with_depth_seeds(
     log=print,
     mvs_count: int = 0,
     gap_count: int = 0,
+    device: str = "cuda:0",
 ):
     """``solution`` with monocular (``count``), MVS (``mvs_count``) and gap (``gap_count``,
-    `spacegen.mvs.gap_seeds`) seed points added."""
+    `spacegen.mvs.gap_seeds`, computed on ``device``) seed points added."""
     from ..mvs import gap_seeds, mvs_seeds
 
     points, colours, views = depth_seeds(solution, depth_dir, train, count, max_long_side)
     measured = mvs_seeds(solution, depth_dir, train, mvs_count, max_long_side)
-    gaps = gap_seeds(solution, depth_dir, train, gap_count, max_long_side)
+    gaps = gap_seeds(solution, depth_dir, train, gap_count, max_long_side, device)
     log(
         f"depth seeds: {len(points)} monocular, {len(measured[0])} MVS and {len(gaps[0])} gap "
         f"points added to {len(solution.points)} SfM points"

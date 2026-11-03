@@ -134,9 +134,14 @@ def patch_pearson(depth: torch.Tensor, prior: torch.Tensor, valid: torch.Tensor,
 class Images:
     """uint8 RGB per (image, downscale) in pinned CPU memory, loaded in parallel."""
 
-    def __init__(self, paths: list[Path], long_side: int, levels: set[int], workers: int = 16):
+    def __init__(
+        self, paths: list[Path], long_side: int, levels: set[int], workers: int = 16, indices=None
+    ):
+        # Only ``indices`` (default: all) are loaded; a block uses a few hundred of a
+        # capture's images, and pinned memory adds to the pressure systemd-oomd watches.
         self.images: dict[tuple[int, int], torch.Tensor] = {}
-        jobs = [(i, level) for level in sorted(levels) for i in range(len(paths))]
+        chosen = range(len(paths)) if indices is None else sorted(set(indices))
+        jobs = [(i, level) for level in sorted(levels) for i in chosen]
         with ThreadPoolExecutor(workers) as pool:
             loaded = pool.map(lambda job: read_rgb(paths[job[0]], long_side, job[1]), jobs)
             for job, image in zip(jobs, loaded, strict=True):
@@ -277,9 +282,11 @@ def drop_mirror_depths(prior, camera_to_world, intrinsics, width: int, reflector
     z = 1 / metric.clamp_min(1e-9)
     local = torch.stack(((xs - k[0, 2]) / k[0, 0] * z, (ys - k[1, 2]) / k[1, 1] * z, z), -1)
     world = local @ camera_to_world[:3, :3].T + camera_to_world[:3, 3]
-    from .reflect import behind_opaque
+    from .reflect import seen_through_opaque
 
-    behind = behind_opaque(world.reshape(-1, 3), reflectors).reshape(metric.shape) & (metric > 0)
+    eye = camera_to_world[:3, 3]
+    behind = seen_through_opaque(world.reshape(-1, 3), eye, reflectors).reshape(metric.shape)
+    behind &= metric > 0
     if not behind.any():
         return prior
     metric = torch.where(behind, 0.0, metric)
@@ -456,7 +463,9 @@ def train_splat(
         train_indices, val_indices = split_indices(len(cameras), config.holdout_every)
     val_indices = val_indices or []
     levels = {_level(config, s) for s, _ in config.resolution_schedule} | {1}
-    images = Images(image_paths, config.max_long_side, levels)
+    images = Images(
+        image_paths, config.max_long_side, levels, indices=[*train_indices, *val_indices]
+    )
     radius = scene_radius([cameras[i] for i in train_indices])
     extent = scene_extent([cameras[i] for i in train_indices], points)
     if isinstance(initial, (str, Path)):
@@ -520,14 +529,35 @@ def train_splat(
         "reflectors": None if reflectors is None else reflectors,
     }
     write_json(output / "run.json", metadata)
-    # A run killed after its last step (while saving or evaluating) restarts from there.
-    first = config.steps if _load_finished(output, model, corrections, config.steps) else 0
-    log_path = output / "training.jsonl"
-    if not first:
-        log_path.unlink(missing_ok=True)
     order: list[int] = []
     # Last photometric L1 of each training view; NaN until the view has been trained once.
     view_error = torch.full((len(cameras),), float("nan"), device=device)
+    # A killed run restarts from its last checkpoint: after its last step (while saving
+    # or evaluating), or mid-run when the checkpoint holds the optimizer state of this
+    # same run (configuration, cameras and split).
+    run_key = json.dumps(
+        {"config": asdict(config), "train": list(train_indices), "val": list(val_indices)},
+        sort_keys=True,
+        default=str,
+    )
+    trainers = {**optimizers, "pose": pose_optimizer, "colour": colour_optimizer}
+    if fresnel_optimizer is not None:
+        trainers["fresnel"] = fresnel_optimizer
+    first = config.steps if _load_finished(output, model, corrections, config.steps) else 0
+    if not first:
+        resumed = _load_mid_run(output, model, corrections, trainers, run_key)
+        if resumed is not None:
+            first = resumed["step"]
+            view_error = resumed["view_error"].to(device)
+            order = list(resumed["order"])
+            rng.bit_generator.state = resumed["rng"]
+            log(f"resumed from the checkpoint at step {first}")
+    log_path = output / "training.jsonl"
+    if not first:
+        log_path.unlink(missing_ok=True)
+    elif log_path.exists():
+        rows = [r for r in log_path.read_text().splitlines() if json.loads(r)["step"] < first]
+        log_path.write_text("".join(row + "\n" for row in rows))
     started = time.perf_counter()
     for step in range(first, config.steps):
         if not order:
@@ -637,7 +667,14 @@ def train_splat(
                 f"x{level} {row['elapsed_s']:.0f}s {row['gpu_peak_gib']:.1f}G"
             )
         if step and step % config.checkpoint_every == 0:
-            _save(output, model, corrections, step)
+            training = {
+                "key": run_key,
+                "trainers": {name: o.state_dict() for name, o in trainers.items()},
+                "view_error": view_error.cpu(),
+                "order": [int(i) for i in order],
+                "rng": rng.bit_generator.state,
+            }
+            _save(output, model, corrections, step + 1, training)
         if step and step % config.evaluate_every == 0 and val_indices:
             report = evaluate(
                 model,
@@ -712,13 +749,17 @@ def _prune_screen_size(model, config: SplatConfig, info, step, width, height, pr
         model.params["opacities"][oversize] = dead
 
 
-def _save(output: Path, model, corrections, step: int) -> None:
+def _save(output: Path, model, corrections, step: int, training: dict | None = None) -> None:
+    """``checkpoint.pt`` after ``step`` steps. Mid-run checkpoints add ``training`` (the
+    optimizer states, view order and random state needed to continue); the final one
+    leaves it out, which keeps it a third of the size."""
     payload = {
         "step": step,
         "sh_degree": model.sh_degree,
         "params": {k: v.detach().cpu() for k, v in model.params.items()},
         "corrections": {k: v.detach().cpu() for k, v in corrections.state_dict().items()},
         "f0": None if model.reflectors is None else model.reflectors["f0"].detach().cpu(),
+        "training": training,
     }
     temporary = output / "checkpoint.pt.tmp"
     torch.save(payload, temporary)
@@ -740,6 +781,38 @@ def _load_finished(output: Path, model, corrections, steps: int) -> bool:
     if state.get("f0") is not None and model.reflectors is not None:
         model.reflectors["f0"] = state["f0"].to(model.device)
     return True
+
+
+@torch.no_grad()
+def _load_mid_run(output: Path, model, corrections, trainers: dict, run_key: str) -> dict | None:
+    """Load a mid-run ``checkpoint.pt`` of this same run into the model, corrections and
+    optimizers (``trainers``, built on the current parameters); returns its training
+    state with ``step``, or None when there is none to continue from."""
+    path = output / "checkpoint.pt"
+    if not path.exists():
+        return None
+    state = torch.load(path, map_location=model.device, weights_only=True)
+    training = state.get("training")
+    if (
+        training is None
+        or training["key"] != run_key
+        or set(state["params"]) != set(model.params)
+        or set(training["trainers"]) != set(trainers)
+    ):
+        return None
+
+    for key, value in state["params"].items():
+        model.params[key] = torch.nn.Parameter(value.to(model.device))
+        trainers[key].param_groups[0]["params"] = [model.params[key]]
+    corrections.load_state_dict(state["corrections"])
+    if "fresnel" in trainers:
+        model.reflectors["f0"] = state["f0"].to(model.device).requires_grad_(True)
+        trainers["fresnel"].param_groups[0]["params"] = [model.reflectors["f0"]]
+    trainers["pose"].param_groups[0]["params"] = [corrections.pose]
+    trainers["colour"].param_groups[0]["params"] = [corrections.colour]
+    for name, trainer in trainers.items():
+        trainer.load_state_dict(training["trainers"][name])
+    return {**training, "step": int(state["step"])}
 
 
 @torch.no_grad()

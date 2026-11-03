@@ -47,7 +47,7 @@ import torch.nn.functional as F
 from .config import FillConfig, PipelineConfig
 from .contracts import Camera, look_at
 from .depth import predict_depth
-from .scene_frame import SceneFrame, estimate_frame
+from .scene_frame import SceneFrame, run_frame
 from .splat.model import SH_C0, GaussianModel, load_ply, render, render_camera, save_ply, write_json
 from .splat.train import Corrections, Images, evaluate, load_cameras, scene_radius, ssim
 from .support import compute_support, fibonacci_directions, support_map
@@ -241,9 +241,8 @@ def fill_gaps(run: Path, config: PipelineConfig, device: str, log) -> dict:
     from .reslice import run_solution
 
     solution = run_solution(run)
-    frame = estimate_frame([cameras[i] for i in train], solution.points)
-    write_json(Path(run) / "scene_frame.json", frame.to_dict())
-    stands = standing_points(frame, [cameras[i] for i in range(len(cameras))])
+    frame = run_frame(run, cameras, solution.points, refresh=True)
+    stands = standing_points(frame, cameras)
     log(
         f"fill: {len(stands)} standing points, camera height {frame.camera_height:.3f}, "
         f"floor found {frame.floor_found}"
@@ -287,7 +286,8 @@ def fill_gaps(run: Path, config: PipelineConfig, device: str, log) -> dict:
         known = (~hole) & (alpha_np >= fill.min_alpha) & (depth_np > 0)
         mono = predict_depth(composite, config.depth.model, device)
         fallback = 2.0 * frame.camera_height
-        metric = align_depth(mono, depth_np / np.maximum(alpha_np, 1e-6), known, fallback)
+        # gsplat's RGB+ED depth is already the expected depth (divided by alpha).
+        metric = align_depth(mono, depth_np, known, fallback)
         seeded = seed_gaussians(probe, composite, metric, hole, 3, model.sh_degree, device)
         if seeded is not None:
             centre = torch.tensor(probe.centre, dtype=torch.float32, device=device)
@@ -319,7 +319,10 @@ def fill_gaps(run: Path, config: PipelineConfig, device: str, log) -> dict:
     held_out = None
     if val:
         images = Images(
-            [solution.image_paths[i] for i in range(len(cameras))], config.splat.max_long_side, {1}
+            [solution.image_paths[i] for i in range(len(cameras))],
+            config.splat.max_long_side,
+            {1},
+            indices=val,
         )
         held_out = evaluate(model, cameras, images, val, None, config.splat, output, "val", False)[
             "mean"
@@ -360,7 +363,7 @@ def distil(
     from .reslice import run_solution
 
     solution = run_solution(run)
-    images = Images(solution.image_paths, splat.max_long_side, {2})
+    images = Images(solution.image_paths, splat.max_long_side, {2}, indices=train)
     radius = scene_radius([cameras[i] for i in train])
     rates = {
         "means": splat.means_lr_final * 10 * radius,

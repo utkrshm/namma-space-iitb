@@ -28,7 +28,7 @@ from scipy.ndimage import gaussian_filter1d
 
 from .config import DemoConfig, TourConfig
 from .contracts import Camera, look_at
-from .scene_frame import SceneFrame, estimate_frame
+from .scene_frame import SceneFrame, run_frame
 from .splat.model import GaussianModel, load_ply, render_camera, write_json
 from .splat.train import load_cameras
 from .support import support_map
@@ -178,14 +178,7 @@ def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
 
         train_cameras = [c for c, split in zip(cameras, splits, strict=True) if split == "train"]
         model.extras["support"] = compute_support(model, train_cameras)
-    if (run / "scene_frame.json").exists():
-        frame = SceneFrame.load(run / "scene_frame.json")
-    else:
-        from .sfm import load_solution
-
-        solution = load_solution(run / "sfm", run / "frames")
-        frame = estimate_frame(cameras, solution.points)
-        write_json(run / "scene_frame.json", frame.to_dict())
+    frame = run_frame(run, cameras)
     centres = frame.to_aligned(np.stack([c.centre for c in cameras]))
     up = frame.up
     fps = config.fps

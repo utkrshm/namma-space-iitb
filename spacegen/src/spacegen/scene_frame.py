@@ -19,8 +19,10 @@ floor and a physical length unit, so this module estimates:
 
 Output: ``<run>/scene_frame.json`` with ``rotation`` (world → aligned, 3×3), ``origin``
 (world point on the floor below the mean camera), ``camera_height`` (world units),
-``floor_found`` and ``areas`` (per area: camera indices, plan centre and radius in
-camera heights). In the aligned frame, z is up and the floor is z = 0.
+``floor_found``, ``camera_count`` and ``areas`` (per area: camera indices, plan centre and
+radius in camera heights). In the aligned frame, z is up and the floor is z = 0. In the
+run file, area camera indices count all cameras of ``splat/cameras.json`` (training and
+held-out) in its order; use :func:`run_frame` to read or make it.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ class SceneFrame:
     camera_height: float  # world units
     floor_found: bool
     areas: list[dict]
+    camera_count: int = 0  # cameras the area indices count
 
     def to_aligned(self, points: np.ndarray) -> np.ndarray:
         """World points → aligned coordinates in camera heights (z up, floor at 0)."""
@@ -59,6 +62,7 @@ class SceneFrame:
             "origin": self.origin.tolist(),
             "camera_height": self.camera_height,
             "floor_found": self.floor_found,
+            "camera_count": self.camera_count,
             "areas": self.areas,
         }
 
@@ -71,7 +75,28 @@ class SceneFrame:
             float(value["camera_height"]),
             bool(value["floor_found"]),
             value["areas"],
+            int(value.get("camera_count", 0)),
         )
+
+
+def run_frame(run, cameras: list[Camera], points=None, refresh: bool = False) -> SceneFrame:
+    """The run's ``scene_frame.json``, made from ``cameras`` (all cameras of
+    ``splat/cameras.json``, in order) and ``points`` (default: the run's SfM points) when
+    missing, stale or ``refresh``. A file made from another camera list (older runs
+    counted training cameras only) is remade, so area indices always index ``cameras``."""
+    path = Path(run) / "scene_frame.json"
+    if path.exists() and not refresh:
+        frame = SceneFrame.load(path)
+        if frame.camera_count == len(cameras):
+            return frame
+
+    if points is None:
+        from .reslice import run_solution
+
+        points = run_solution(run).points
+    frame = estimate_frame(cameras, points)
+    path.write_text(json.dumps(frame.to_dict(), indent=1) + "\n")
+    return frame
 
 
 def _ransac_plane(points: np.ndarray, prior_up: np.ndarray, threshold: float, rng, iterations=2000):
@@ -157,7 +182,7 @@ def estimate_frame(cameras: list[Camera], points: np.ndarray, area_size: float =
     mean_centre = centres.mean(0)
     origin = mean_centre - (mean_centre @ up - floor) * up
 
-    frame = SceneFrame(rotation, origin, camera_height, bool(floor_found), [])
+    frame = SceneFrame(rotation, origin, camera_height, bool(floor_found), [], len(cameras))
     frame.areas = find_areas(frame.to_aligned(centres), area_size)
     return frame
 
