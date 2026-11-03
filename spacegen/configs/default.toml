@@ -134,6 +134,7 @@ checkpoint_every = 5000
 max_images_per_block = 450
 overlap = 0.15
 finetune_steps = 10000
+occlusion_merge = true
 
 [fill]
 enabled = true

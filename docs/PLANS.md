@@ -99,7 +99,9 @@ Record substantive decisions and their implementation steps here before executio
 
 - **Status:** occlusion-aware merge and reflection alignment adopted (CPU-tested; GPU
   not run). Bilateral grid behind `splat.bilateral_grid` (off); A/B queued
-  (`outputs/spacegen/ab_queue2.sh`).
+  (`outputs/spacegen/ab_queue2.sh`). Amended 04-11-26 01:11: `partition.occlusion_merge`
+  (default on) keeps the old rule reachable; `ab_queue3.sh` merges the same new_home
+  blocks (10k steps) both ways and compares, including frames 00280, 00096, 00160.
 - **Decision:**
   1. Block merge: a camera votes for a Gaussian's owner only if the Gaussian is not
      behind the surface that camera's depth prior shows (5% margin). Before, a camera

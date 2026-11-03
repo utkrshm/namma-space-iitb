@@ -232,6 +232,9 @@ class PartitionConfig:
     max_images_per_block: int = 450
     overlap: float = 0.15
     finetune_steps: int = 10_000
+    # At the merge, a camera votes for a Gaussian's block only if the Gaussian is not
+    # behind the surface its depth prior shows (`partition.visibility_owner`).
+    occlusion_merge: bool = True
 
 
 @dataclass(frozen=True)

@@ -216,7 +216,9 @@ def train_in_blocks(
     merged_path = folder / "merged.ply"
     if not merged_path.exists():
         parts = []
-        surfaces = surface_maps(depth_dir, solution.image_paths, solution.cameras, device)
+        surfaces = None
+        if config.partition.occlusion_merge:
+            surfaces = surface_maps(depth_dir, solution.image_paths, solution.cameras, device)
         for number in range(len(blocks)):
             model = load_ply(folder / str(number) / "scene.ply", device)
             owner = visibility_owner(
