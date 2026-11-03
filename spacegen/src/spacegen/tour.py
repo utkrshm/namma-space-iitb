@@ -291,10 +291,13 @@ def scene_model(run: Path, log=print) -> tuple[Path, bool]:
     return splat, False
 
 
-def render_tour(run: Path, config: TourConfig, device: str, log) -> dict:
+def render_tour(
+    run: Path, config: TourConfig, device: str, log, output: Path | None = None
+) -> dict:
+    """Write ``tour.mp4`` and ``tour.json`` to ``output`` (default ``<run>/tour``)."""
     run = Path(run)
-    output = run / "tour"
-    output.mkdir(exist_ok=True)
+    output = Path(output) if output is not None else run / "tour"
+    output.mkdir(parents=True, exist_ok=True)
     path, filled = scene_model(run, log)
     model = load_ply(path, device)
     cameras, splits = load_cameras(run / "splat" / "cameras.json")

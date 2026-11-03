@@ -180,7 +180,7 @@ def strengths(params: dict, reflectors: dict) -> tuple[torch.Tensor, torch.Tenso
 def sh_colours(params: dict, degree: int, viewpoint: torch.Tensor, keep=None) -> torch.Tensor:
     """RGB [N,3] of the spherical harmonics seen from ``viewpoint``, as gsplat computes them
     (only for the Gaussians in ``keep``, when given)."""
-    from gsplat import spherical_harmonics
+    from .raster import spherical_harmonics
 
     coeffs = torch.cat((params["sh0"], params["shn"][:, : (degree + 1) ** 2 - 1]), dim=1)
     means = params["means"]
@@ -229,7 +229,7 @@ def render_with_reflections(
 ):
     """`spacegen.splat.render` for a model with reflectors; ``k`` is already in gsplat's
     pixel convention. Returns RGB, depth, alpha and the main pass's info."""
-    from gsplat import rasterization
+    from .raster import rasterization
 
     params = model.params
     reflectors = model.reflectors

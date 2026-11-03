@@ -134,9 +134,10 @@ def render(
 
     ``intrinsics`` use integer pixel centres; gsplat samples at (u + ½, v + ½), so the
     principal point moves by +½ here. ``colors`` replaces the SH colours with any
-    per-Gaussian feature (e.g. support), rendered with the same blending weights.
+    per-Gaussian feature (e.g. support), rendered with the same blending weights. A model
+    on the CPU renders with `spacegen.splat.raster`'s PyTorch rasterizer (slow).
     """
-    from gsplat import rasterization
+    from .raster import rasterization
 
     params = model.params
     k = intrinsics.clone()

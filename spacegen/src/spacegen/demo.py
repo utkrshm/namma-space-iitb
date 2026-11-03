@@ -106,10 +106,13 @@ def _crossfade(writer: Writer, previous: np.ndarray | None, frames: list[np.ndar
     return frames[-1] if frames else previous
 
 
-def render_demo(run: Path, config: DemoConfig, device: str, log) -> dict:
+def render_demo(
+    run: Path, config: DemoConfig, device: str, log, output: Path | None = None
+) -> dict:
+    """Write ``demo.mp4`` and ``demo.json`` to ``output`` (default ``<run>/demo``)."""
     run = Path(run)
-    output = run / "demo"
-    output.mkdir(exist_ok=True)
+    output = Path(output) if output is not None else run / "demo"
+    output.mkdir(parents=True, exist_ok=True)
     path, filled = scene_model(run, log)
     model = load_ply(path, device)
     cameras, splits = load_cameras(run / "splat" / "cameras.json")
