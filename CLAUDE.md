@@ -29,3 +29,6 @@ Rules for writing lessons:
 - Check `nvidia-smi` before ad-hoc GPU renders while a pipeline runs, and `source
   spacegen/scripts/env.sh` first: without it gsplat has no CUDA.
 - Check `df -h` before launching runs that write checkpoints; the disk sits near 97%.
+- Run `bash -n` on every unattended queue script and save `status=$?` right after the
+  command: `echo "$(date) exit $?"` logs date's status, and a `>>>` typo killed a script's
+  last lines unseen.
