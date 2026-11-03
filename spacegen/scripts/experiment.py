@@ -5,8 +5,9 @@
 
 ``train`` reuses RUN's frames, cameras (with re-sliced extra frames), depth and MVS, and
 writes ``RUN/exp/NAME/splat``; the configuration is RUN's ``config.json`` with ``steps``
-and the overrides applied. ``compare`` prints held-out means and, per frame, the PSNR
-change against BASE (same cameras and held-out frames, or it refuses).
+(``refine_stop`` scaled with it) and the overrides applied. ``compare`` prints held-out
+means and, per frame, the PSNR change against BASE (same cameras and held-out frames, or
+it refuses).
 """
 
 import argparse
@@ -25,7 +26,11 @@ def train(run: Path, name: str, steps: int, overrides: list[str]) -> None:
 
     config = PipelineConfig.from_dict(json.loads((run / "config.json").read_text()))
     sections = parse_overrides(overrides)
-    sections.setdefault("splat", {})["steps"] = steps
+    splat = sections.setdefault("splat", {})
+    splat["steps"] = steps
+    # Densification stops at the same share of the run as in the full training (25k of
+    # 30k), not at 25k: a 10k-step test would otherwise densify until its last step.
+    splat.setdefault("refine_stop", round(config.splat.refine_stop * steps / config.splat.steps))
     config = config.replace(**sections)
     output = run / "exp" / name
     output.mkdir(parents=True, exist_ok=True)

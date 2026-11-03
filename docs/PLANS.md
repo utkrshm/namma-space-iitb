@@ -125,6 +125,8 @@ Record substantive decisions and their implementation steps here before executio
 
 - **Status:** implemented behind `splat.planar_prior` (off); A/B queued
   (`outputs/spacegen/ab_queue.sh`, after the GPU tests and the m block retrain).
+  Amended 04-11-26 01:09: `scripts/experiment.py` scales `refine_stop` with `--steps` (8333 at
+  10k, as 25k of 30k); before, a 10k-step arm would have densified until its last step.
 - **Decision:** per training frame, segment `wall`, `floor` and `ceiling` (Mask2Former,
   ADE20K, the segmenter already used for windows and mirrors), fit up to two planes per
   large region to the frame's depth target (RANSAC in camera space, inliers within 1.5% of
