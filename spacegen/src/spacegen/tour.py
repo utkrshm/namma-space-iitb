@@ -11,7 +11,8 @@
    where none passes is skipped (``tour.json`` lists what each one scored). A full 360°
    turn over generated content smeared and invented walls in the first areas of the
    vyas-room tour.
-3. **Walkthrough:** eye level along the smoothed capture path, at walking pace.
+3. **Walkthrough:** eye level along the smoothed capture path, at walking pace,
+   without a close-up at either end (`walk_span`).
 
 Look-arounds and the walkthrough render with the capture's own exposure near each view
 (`spacegen.exposure`). At the video's average exposure, views towards a bright window
@@ -433,13 +434,17 @@ def render_tour(
         config.walk_seconds_per_metre * 1.5,
         config.max_turn_deg_per_s,
     )
-    frames = int(max(10.0, walk.duration) * fps)
-    for time in np.linspace(0, walk.duration, frames):
+    start, end = walk_span(model, frame, walk, config, renderer.near)
+    frames = int(max(10.0, end - start) * fps)
+    for time in np.linspace(start, end, frames):
         writer.write(label(renderer(walk.pose(time)), "Walkthrough"))
     sections.append(
         {
             "name": "walkthrough",
             "frames": frames,
+            "start_seconds": start,
+            "end_seconds": end,
+            "path_seconds": walk.duration,
             "checks": renderer.summary(),
         }
     )
@@ -543,12 +548,47 @@ def filmed_arc(cameras, train: list[int], frame: SceneFrame, eye_aligned, config
     }
 
 
+def view_depth(depth: torch.Tensor, alpha: torch.Tensor) -> float:
+    """Median depth (world units) of a view's rendered pixels; 0 when nothing renders."""
+    rendered = alpha > 0.5
+    return float(depth[rendered].median()) if rendered.any() else 0.0
+
+
+@torch.no_grad()
+def walk_span(model, frame: SceneFrame, walk: WalkPath, config: TourConfig, near: float):
+    """``(start, end)`` seconds of ``walk`` without a close-up or a poorly measured view at
+    either end: the first and last times (every 0.25 s, searched within the first and last
+    quarter) whose 160 × 90 view has a median depth of at least ``min_view_depth`` camera
+    heights and (with ``support``) at most ``walk_end_max_unmeasured`` unmeasured pixels."""
+    k = _intrinsics(160, 90, 75.0)
+    limit = config.min_view_depth * frame.camera_height
+
+    def open_view(time: float) -> bool:
+        camera = Camera("probe", 160, 90, k, walk.pose(time))
+        if "support" not in model.extras:
+            _, depth, alpha, _ = render_camera(model, camera, near_plane=near)
+            return view_depth(depth, alpha) >= limit
+        fraction, alpha, depth = measured_support(model, camera)
+        rendered = alpha > 0.5
+        unmeasured = float((fraction[rendered] < 0.5).float().mean()) if rendered.any() else 1.0
+        return view_depth(depth, alpha) >= limit and unmeasured <= config.walk_end_max_unmeasured
+
+    times = np.arange(0.0, walk.duration + 1e-9, 0.25)
+    quarter = walk.duration / 4
+    start = next((t for t in times if t >= quarter or open_view(t)), 0.0)
+    end = next((t for t in times[::-1] if t <= walk.duration - quarter or open_view(t)), 0.0)
+    if end <= start:
+        return 0.0, walk.duration
+    return float(start), float(end)
+
+
 def _checked_arc(model, frame: SceneFrame, eye, arc: dict, config: TourConfig) -> dict:
     """The longest part of ``arc`` whose views pass the checks, before anything is rendered.
 
-    Each 5° view (320 × 180) must have at most ``max_unrendered`` pixels with alpha < HOLE_ALPHA
-    and at most ``max_unmeasured`` rendered pixels that no capture camera saw from a
-    nearby direction (filled Gaussians count as unmeasured). Returns ``{"sweep": (first,
+    Each 5° view (320 × 180) must have at most ``max_unrendered`` pixels with alpha < HOLE_ALPHA,
+    at most ``max_unmeasured`` rendered pixels that no capture camera saw from a nearby
+    direction (filled Gaussians count as unmeasured), and a median depth of at least
+    ``min_view_depth`` camera heights (no close-up of a shelf). Returns ``{"sweep": (first,
     last) in radians, or None when less than min_look_deg passes; "pitch"; "scores" (per
     view); "summary"}``, the summary giving the longest passing sweep and the median
     shares, to show why an area was skipped.
@@ -565,14 +605,24 @@ def _checked_arc(model, frame: SceneFrame, eye, arc: dict, config: TourConfig) -
         camera = Camera(
             "probe", 320, 180, k, look_at(eye, eye + frame.rotation.T @ direction, frame.up)
         )
-        fraction, alpha, _ = measured_support(model, camera)
+        fraction, alpha, depth = measured_support(model, camera)
         unrendered = float((alpha < HOLE_ALPHA).float().mean())
         rendered = alpha > 0.5
         unmeasured = float((fraction[rendered] < 0.5).float().mean()) if rendered.any() else 1.0
+        distance = view_depth(depth, alpha) / frame.camera_height
         scores.append(
-            {"yaw_deg": math.degrees(yaw), "unrendered": unrendered, "unmeasured": unmeasured}
+            {
+                "yaw_deg": math.degrees(yaw),
+                "unrendered": unrendered,
+                "unmeasured": unmeasured,
+                "depth_camera_heights": distance,
+            }
         )
-        passed.append(unrendered <= config.max_unrendered and unmeasured <= config.max_unmeasured)
+        passed.append(
+            unrendered <= config.max_unrendered
+            and unmeasured <= config.max_unmeasured
+            and distance >= config.min_view_depth
+        )
     best, best_first, run = 0, 0, 0
     for j, ok in enumerate(passed):
         run = run + 1 if ok else 0
@@ -582,6 +632,7 @@ def _checked_arc(model, frame: SceneFrame, eye, arc: dict, config: TourConfig) -
         "passing_deg": 5 * (best - 1) if best else 0,
         "unmeasured_median": float(np.median([s["unmeasured"] for s in scores])),
         "unrendered_median": float(np.median([s["unrendered"] for s in scores])),
+        "depth_median": float(np.median([s["depth_camera_heights"] for s in scores])),
     }
     sweep = None
     if best and 5 * (best - 1) >= config.min_look_deg:

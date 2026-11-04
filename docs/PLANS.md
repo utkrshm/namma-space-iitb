@@ -14,6 +14,37 @@ Record substantive decisions and their implementation steps here before executio
 - Completion criteria:
 ```
 
+## 04-11-26 05:39:03 IST — spacegen: no close-ups in look-arounds or at the ends of the walk
+
+- **Status:** adopted (CPU-checked).
+- **Finding (CPU tour of coorg):** with five candidates per area, coorg's area 2 now got a
+  look-around. It was camera 980, the video's last seconds, tilted 32° down at a
+  wooden shelf 0.36 camera heights away. The views were measured, so the shares
+  passed, but they show nothing of the room. The walkthrough ends at the same shelf
+  (tilt −35°, so the 45° trim does not apply). m-block's walk starts beside a hanging
+  cloth. Middle view distance of the candidates' passing views (160 × 90, camera
+  heights):
+  - look-arounds that were good: vyas_room 1.54–1.83, m-block 1.97, coorg area 1 1.34;
+  - coorg area 2's candidates: 0.36 (980, chosen), 0.61, 0.68 and 0.82.
+- **Decision:** `TourConfig.min_view_depth` = 0.75 camera heights. A look-around view
+  also fails its check when the median rendered depth of its pixels is nearer (coorg's
+  area 2 is then skipped, as it was before). The walkthrough starts at the first and
+  ends at the last time whose view (160 × 90, every 0.25 s) is at least that deep and at
+  most 25% unmeasured (`walk_end_max_unmeasured`). Coorg's last views looked deep again,
+  into a shelf niche at 1.5 camera heights, but were 35–38% unmeasured and smeared. The
+  search covers at most the first and last quarter of the walk, so a narrow stretch
+  in the middle stays. `tour.json` records the walk's `start_seconds` and `end_seconds`.
+  The walks lose 3.3 s at coorg's end, 0.75 s at m-block's start (a hanging cloth beside
+  the lens), and at most 0.25 s elsewhere.
+- **Rationale and trade-offs:** a look-around or a last shot that fills the frame with a
+  wall says nothing about the space, and close surfaces are where off-path views
+  smear. 0.75 camera heights (about 1.1 m) is half the nearest good look-around. A
+  small bathroom may lose its look-around. The cost is a few dozen low-resolution renders.
+- **Affected components:** `spacegen.tour` (`_checked_arc`, `walk_span`, `render_tour`),
+  `TourConfig`, tests.
+- **Completion criteria:** CPU test (a walk ending 0.3 from a wall is trimmed before it);
+  coorg and m-block tours re-rendered on the CPU and checked by eye.
+
 ## 04-11-26 04:59:55 IST — spacegen: walks leave out a start or end that looks at the floor
 
 - **Status:** adopted (CPU preview of m-block).

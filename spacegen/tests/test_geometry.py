@@ -683,3 +683,37 @@ def test_the_overview_cutaway_keeps_what_lies_under_a_glossy_floor():
     frame = SceneFrame(np.eye(3), np.zeros(3), 1.0, True, [])
     kept = cutaway(model, frame, np.array([[0.0, 0.0, 1.0]]))
     assert kept.params["means"][:, 2].tolist() == [-1.0, 0.0, 1.0]
+
+
+def test_the_walkthrough_stops_before_a_close_up_of_a_wall():
+    from spacegen.splat.model import SH_C0, GaussianModel
+    from spacegen.tour import walk_span
+
+    # A wall at x = 3 (4 wide, 3 high, flat discs); the capture walks at eye height from
+    # x = 0 towards it, ending 0.3 camera heights away.
+    ys, zs = np.meshgrid(np.linspace(-2, 2, 81), np.linspace(0, 3, 61))
+    count = ys.size
+    scales = torch.log(torch.tensor([[0.002, 0.04, 0.04]])).repeat(count, 1)
+    wall = GaussianModel(
+        {
+            "means": torch.tensor(np.stack((np.full(count, 3.0), ys.ravel(), zs.ravel()), 1)),
+            "scales": scales,
+            "quats": torch.tensor([[1.0, 0, 0, 0]] * count),
+            "opacities": torch.full((count,), 4.0),
+            "sh0": torch.full((count, 1, 3), 0.2 / SH_C0),
+            "shn": torch.zeros((count, 0, 3)),
+        },
+        0,
+    )
+    frame = SceneFrame(np.eye(3), np.zeros(3), 1.0, True, [])
+    k = np.array([[300.0, 0, 159.5], [0, 300.0, 119.5], [0, 0, 1]])
+    cameras = [
+        Camera("c", 320, 240, k, look_at(np.array([x, 0, 1.0]), np.array([x + 1, 0, 1.0])))
+        for x in np.linspace(0, 2.7, 60)
+    ]
+    walk = WalkPath(cameras, frame, 1.8, 45.0)
+    start, end = walk_span(wall, frame, walk, TourConfig(), 0.15)
+
+    assert start == 0.0
+    x_end = np.linalg.inv(walk.pose(end))[0, 3]
+    assert 2.0 < x_end <= 3.0 - TourConfig().min_view_depth + 0.05, x_end

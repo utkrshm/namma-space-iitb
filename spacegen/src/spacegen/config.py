@@ -283,6 +283,12 @@ class TourConfig:
     max_unmeasured: float = 0.05
     max_unrendered: float = 0.01
     min_look_deg: float = 30.0
+    # Look-around views, and the walkthrough's first and last views, must look at least
+    # this far (median rendered depth, camera heights): no close-ups of a wall or shelf.
+    min_view_depth: float = 0.75
+    # The walkthrough's first and last views must also have at most this share of
+    # unmeasured pixels (coorg's walk ended looking into a shelf niche, 38% unmeasured).
+    walk_end_max_unmeasured: float = 0.25
     # Standing points tried per area before its look-around is skipped.
     look_candidates: int = 5
     walk_seconds_per_metre: float = 1.2
