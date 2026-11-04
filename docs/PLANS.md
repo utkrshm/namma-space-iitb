@@ -87,6 +87,11 @@ Record substantive decisions and their implementation steps here before executio
 - **Affected components:** `spacegen.tour.cutaway`, its docstring, tests.
 - **Completion criteria:** CPU test of the cut; CPU overview renders of vyas_room,
   m-block and new_home checked by eye (done).
+- **Alternative tested (04-11 06:25):** drop what lies under the floor and make the
+  floor's own Gaussians (|z| < 0.05 camera heights) opaque in the dollhouse views. From
+  the demo build-up's 70° the floor stayed as dark as with the old cut on both vyas_room
+  and m-block: the surface Gaussians alone do not cover it. Keeping what is under it
+  shows a pale floor on vyas_room (its tiles are beige) and the wood on m-block.
 
 ## 04-11-26 04:47:45 IST — spacegen: held-out PSNR with the neighbours' exposure (`psnr_nb`)
 
