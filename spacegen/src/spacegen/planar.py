@@ -106,7 +106,9 @@ def planar_priors(
 
     processor = AutoImageProcessor.from_pretrained(SEGMENTER)
     model = Mask2FormerForUniversalSegmentation.from_pretrained(SEGMENTER)
-    model = model.to(device).eval().half()
+    # Half precision on the GPU; the CPU has no fast half kernels for this model.
+    dtype = torch.float16 if torch.device(device).type == "cuda" else torch.float32
+    model = model.to(device, dtype).eval()
     names = {i: label.split(",")[0].strip() for i, label in model.config.id2label.items()}
     wanted = [i for i, name in names.items() if name in PLANAR]
     fits = json.loads(fits_path.read_text())
@@ -123,7 +125,7 @@ def planar_priors(
         rgb = read_rgb(solution.image_paths[index], 640)
         with torch.no_grad():
             inputs = processor(images=rgb, return_tensors="pt").to(device)
-            result = model(pixel_values=inputs["pixel_values"].half())
+            result = model(pixel_values=inputs["pixel_values"].to(dtype))
             labels = (
                 processor.post_process_semantic_segmentation(
                     result, target_sizes=[(rows, columns)]
